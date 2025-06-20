@@ -813,6 +813,14 @@
             clearInterval(updateInterval);
             
             try {
+                // Calculate averages from collected data
+                const avgData = {
+                    pm25: collectionData.reduce((sum, d) => sum + d.pm25, 0) / collectionData.length,
+                    pm10: collectionData.reduce((sum, d) => sum + d.pm10, 0) / collectionData.length,
+                    temperature: collectionData.reduce((sum, d) => sum + d.temperature, 0) / collectionData.length,
+                    humidity: collectionData.reduce((sum, d) => sum + d.humidity, 0) / collectionData.length
+                };
+                
                 // Save to database
                 const res = await fetch('/api/collect', {
                     method: 'POST',
@@ -824,26 +832,37 @@
                         duration: COLLECTION_DURATION
                     })
                 });
+                
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                }
+                
                 const result = await res.json();
                 
-                // Calculate averages for display
-                const avgData = {
-                    pm25: collectionData.reduce((sum, d) => sum + d.pm25, 0) / collectionData.length,
-                    pm10: collectionData.reduce((sum, d) => sum + d.pm10, 0) / collectionData.length,
-                    temperature: collectionData.reduce((sum, d) => sum + d.temperature, 0) / collectionData.length,
-                    humidity: collectionData.reduce((sum, d) => sum + d.humidity, 0) / collectionData.length
+                // Create complete data object
+                const completeData = {
+                    id: result.id || Date.now(),
+                    aqi: result.aqi || 0,
+                    pm25: result.pm25 || avgData.pm25,
+                    pm10: result.pm10 || avgData.pm10,
+                    temperature: result.temperature || avgData.temperature,
+                    humidity: result.humidity || avgData.humidity,
+                    timestamp: result.timestamp || new Date().toISOString(),
+                    latitude: lat,
+                    longitude: lng,
+                    location: location
                 };
                 
-                // Store data
-                allReadings[result.id || Date.now()] = {
+                // Store data locally
+                allReadings[completeData.id] = {
                     location: location,
-                    data: result,
-                    collectionData: collectionData,
+                    data: completeData,
+                    collectionData: [...collectionData],
                     avgData: avgData
                 };
                 
                 // Add marker to map
-                addDataMarker(location, lat, lng, result);
+                addDataMarker(location, lat, lng, completeData);
                 
                 // Update UI
                 document.getElementById('progressFill').style.background = '#4CAF50';
@@ -853,7 +872,7 @@
                 document.getElementById('collection-status').innerHTML = 
                     `<div style="color: #4CAF50;">
                         ✅ <strong>${location}</strong> collection completed<br>
-                        <small>AQI: ${result.aqi} • PM2.5: ${result.pm25.toFixed(1)} μg/m³ • 
+                        <small>AQI: ${completeData.aqi} • PM2.5: ${completeData.pm25.toFixed(1)} μg/m³ • 
                         ${new Date().toLocaleTimeString()}</small>
                     </div>`;
                 
@@ -864,12 +883,13 @@
                     }
                 }, 3000);
                 
-                // Auto-close after 5 seconds
+                // Auto-close after 8 seconds
                 setTimeout(() => {
                     closeCollectionCard();
                 }, 8000);
                 
             } catch(e) {
+                console.error('Collection save error:', e);
                 alert('Failed to save collection: ' + e.message);
                 stopCollection();
             }
@@ -893,11 +913,75 @@
             
             const popupContent = createDetailedPopup(location, data, readingId);
             marker.bindPopup(popupContent, {maxWidth: 400});
+            
+            // Add chart to popup when it opens
+            marker.on('popupopen', () => {
+                const collectionInfo = allReadings[readingId];
+                if (collectionInfo && collectionInfo.collectionData && collectionInfo.collectionData.length > 0) {
+                    setTimeout(() => {
+                        const canvas = document.getElementById(`popupChart${readingId}`);
+                        if (canvas) {
+                            const ctx = canvas.getContext('2d');
+                            new Chart(ctx, {
+                                type: 'line',
+                                data: {
+                                    labels: collectionInfo.collectionData.map((_, i) => `${i * 4}s`),
+                                    datasets: [{
+                                        label: 'PM2.5',
+                                        data: collectionInfo.collectionData.map(d => d.pm25),
+                                        borderColor: '#007AFF',
+                                        backgroundColor: 'rgba(0, 122, 255, 0.1)',
+                                        tension: 0.4,
+                                        fill: false
+                                    }, {
+                                        label: 'PM10',
+                                        data: collectionInfo.collectionData.map(d => d.pm10),
+                                        borderColor: '#FF9800',
+                                        backgroundColor: 'rgba(255, 152, 0, 0.1)',
+                                        tension: 0.4,
+                                        fill: false
+                                    }]
+                                },
+                                options: {
+                                    responsive: true,
+                                    maintainAspectRatio: false,
+                                    plugins: {
+                                        legend: {display: true, position: 'bottom'},
+                                        title: {display: true, text: 'Collection Timeline'}
+                                    },
+                                    scales: {
+                                        y: {
+                                            title: {display: true, text: 'PM (μg/m³)'},
+                                            beginAtZero: true
+                                        },
+                                        x: {
+                                            title: {display: true, text: 'Time'}
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    }, 100);
+                }
+            });
+            
+            return marker;
         }
         
         function createDetailedPopup(location, data, readingId) {
+            const collectionInfo = allReadings[readingId];
+            
+            // Create chart HTML if we have collection data
+            let chartHtml = '';
+            if (collectionInfo && collectionInfo.collectionData && collectionInfo.collectionData.length > 0) {
+                chartHtml = `
+                    <div style="margin: 16px 0;">
+                        <canvas id="popupChart${readingId}" width="300" height="150"></canvas>
+                    </div>`;
+            }
+            
             return `
-                <div style="text-align: center; min-width: 300px;">
+                <div style="text-align: center; min-width: 320px;">
                     <h4 style="margin: 0 0 12px 0; color: #333;">${location}</h4>
                     <div style="font-size: 36px; font-weight: bold; color: ${getAQIColor(data.aqi)}; margin: 12px 0;">
                         ${data.aqi}
@@ -923,9 +1007,17 @@
                         </div>
                     </div>
                     
+                    ${chartHtml}
+                    
+                    ${collectionInfo && collectionInfo.collectionData ? 
+                        `<div style="background: #e3f2fd; padding: 12px; border-radius: 8px; margin: 12px 0; font-size: 14px;">
+                            📊 <strong>${collectionInfo.collectionData.length}</strong> data points collected<br>
+                            ⏱️ Collection duration: ${COLLECTION_DURATION / 60} minutes
+                        </div>` : ''}
+                    
                     <div style="font-size: 12px; color: #999; padding-top: 12px; border-top: 1px solid #eee;">
                         📅 ${new Date(data.timestamp).toLocaleString()}<br>
-                        📍 ${data.latitude?.toFixed(6) || lat.toFixed(6)}, ${data.longitude?.toFixed(6) || lng.toFixed(6)}
+                        📍 ${data.latitude?.toFixed(6)}, ${data.longitude?.toFixed(6)}
                     </div>
                 </div>
             `;
@@ -936,35 +1028,58 @@
         updateData();
         setInterval(updateData, 5000);
         
-        // Load existing data points (this would come from your API)
-        // fetch('/api/readings').then(res => res.json()).then(data => {
-        //     if (data.readings) {
-        //         data.readings.forEach(reading => {
-        //             if (reading.location_name && reading.latitude && reading.longitude) {
-        //                 const readingData = {
-        //                     id: reading.id,
-        //                     aqi: reading.aqi,
-        //                     pm25: reading.pm25,
-        //                     pm10: reading.pm10,
-        //                     temperature: reading.temp,
-        //                     humidity: reading.humidity,
-        //                     timestamp: reading.timestamp,
-        //                     latitude: reading.latitude,
-        //                     longitude: reading.longitude
-        //                 };
-        //                 
-        //                 allReadings[reading.id] = {
-        //                     location: reading.location_name,
-        //                     data: readingData,
-        //                     collectionData: [],
-        //                     avgData: {}
-        //                 };
-        //                 
-        //                 addDataMarker(reading.location_name, reading.latitude, reading.longitude, readingData);
-        //             }
-        //         });
-        //     }
-        // });
+        // Load existing data points from backend
+        async function loadExistingReadings() {
+            try {
+                const res = await fetch('/api/readings');
+                const data = await res.json();
+                
+                if (data.readings && data.readings.length > 0) {
+                    console.log(`Loading ${data.readings.length} existing readings...`);
+                    
+                    data.readings.forEach(reading => {
+                        if (reading.location_name && reading.latitude && reading.longitude) {
+                            const readingData = {
+                                id: reading.id,
+                                aqi: reading.aqi,
+                                pm25: reading.pm25,
+                                pm10: reading.pm10,
+                                temperature: reading.temp,
+                                humidity: reading.humidity,
+                                timestamp: reading.timestamp,
+                                latitude: reading.latitude,
+                                longitude: reading.longitude,
+                                location: reading.location_name
+                            };
+                            
+                            // Store in memory (without collection data for existing readings)
+                            allReadings[reading.id] = {
+                                location: reading.location_name,
+                                data: readingData,
+                                collectionData: [], // No historical collection data
+                                avgData: {
+                                    pm25: reading.pm25,
+                                    pm10: reading.pm10,
+                                    temperature: reading.temp,
+                                    humidity: reading.humidity
+                                }
+                            };
+                            
+                            // Add marker to map
+                            addDataMarker(reading.location_name, reading.latitude, reading.longitude, readingData);
+                        }
+                    });
+                    
+                    console.log('Existing readings loaded successfully');
+                }
+            } catch (error) {
+                console.error('Failed to load existing readings:', error);
+                // Don't show alert for this as it's not critical
+            }
+        }
+        
+        // Load existing readings after map initialization
+        setTimeout(loadExistingReadings, 1000);
     </script>
 </body>
 </html>

@@ -22,11 +22,20 @@ SENSOR_LOCK = threading.Lock()
 dht22 = None
 
 def init_db():
+    os.makedirs('data', exist_ok=True)
     conn = sqlite3.connect('data/air_quality.db')
     conn.execute('''CREATE TABLE IF NOT EXISTS readings
-                    (id INTEGER PRIMARY KEY, location TEXT, lat REAL, lng REAL,
-                     aqi INTEGER, pm25 REAL, pm10 REAL, temp REAL, humidity REAL,
-                     timestamp REAL)''')
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                     location_name TEXT, 
+                     latitude REAL, 
+                     longitude REAL,
+                     aqi INTEGER, 
+                     pm25 REAL, 
+                     pm10 REAL, 
+                     temp REAL, 
+                     humidity REAL,
+                     timestamp REAL,
+                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
 
@@ -146,7 +155,8 @@ def serve_tile(z, x, y):
     tile_path = f'static/tiles/{z}/{x}/{y}.png'
     if os.path.exists(tile_path) and is_tile_in_bounds(x, y, z):
         return send_file(tile_path, mimetype='image/png')
-    return send_file('static/blank_tile.png', mimetype='image/png')
+    # Return a blank tile if not available
+    return '', 404
 
 def is_tile_in_bounds(x, y, z):
     n = 2.0 ** z
@@ -171,57 +181,132 @@ def realtime_data():
 
 @app.route('/api/collect', methods=['POST'])
 def collect_data():
-    req = request.json
-    
-    # Validate coordinates
-    lat = float(req['latitude'])
-    lng = float(req['longitude'])
-    if not (BOUNDS['south'] <= lat <= BOUNDS['north'] and 
-            BOUNDS['west'] <= lng <= BOUNDS['east']):
-        return jsonify({'error': 'Location outside campus bounds'}), 400
-    
-    with SENSOR_LOCK:
-        current_data = SENSOR_DATA.copy()
-    
-    conn = sqlite3.connect('data/air_quality.db')
-    conn.execute('''INSERT INTO readings (location, lat, lng, aqi, pm25, pm10, temp, humidity, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                 (req['locationName'], lat, lng, current_data['aqi'],
-                  current_data['pm25'], current_data['pm10'], 
-                  current_data['temp'], current_data['humidity'], time.time()))
-    conn.commit()
-    conn.close()
-    
-    return jsonify({
-        **current_data,
-        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-        'location': req['locationName']
-    })
+    try:
+        req = request.json
+        
+        # Validate required fields
+        if not all(key in req for key in ['locationName', 'latitude', 'longitude']):
+            return jsonify({'error': 'Missing required fields'}), 400
+        
+        # Validate coordinates
+        lat = float(req['latitude'])
+        lng = float(req['longitude'])
+        if not (BOUNDS['south'] <= lat <= BOUNDS['north'] and 
+                BOUNDS['west'] <= lng <= BOUNDS['east']):
+            return jsonify({'error': 'Location outside campus bounds'}), 400
+        
+        # Get current sensor data
+        with SENSOR_LOCK:
+            current_data = SENSOR_DATA.copy()
+        
+        # Save to database
+        conn = sqlite3.connect('data/air_quality.db')
+        cursor = conn.cursor()
+        cursor.execute('''INSERT INTO readings 
+                         (location_name, latitude, longitude, aqi, pm25, pm10, temp, humidity, timestamp)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                      (req['locationName'], lat, lng, current_data['aqi'],
+                       current_data['pm25'], current_data['pm10'], 
+                       current_data['temp'], current_data['humidity'], time.time()))
+        
+        reading_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        # Return the saved data with ID
+        return jsonify({
+            'id': reading_id,
+            'aqi': current_data['aqi'],
+            'pm25': current_data['pm25'],
+            'pm10': current_data['pm10'],
+            'temperature': current_data['temp'],
+            'humidity': current_data['humidity'],
+            'timestamp': datetime.now().isoformat(),
+            'location': req['locationName'],
+            'latitude': lat,
+            'longitude': lng
+        })
+        
+    except Exception as e:
+        print(f"Collection error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/readings')
+def get_readings():
+    try:
+        conn = sqlite3.connect('data/air_quality.db')
+        cursor = conn.cursor()
+        cursor.execute('''SELECT id, location_name, latitude, longitude, aqi, pm25, pm10, temp, humidity, timestamp, created_at
+                         FROM readings ORDER BY created_at DESC''')
+        
+        readings = []
+        for row in cursor.fetchall():
+            readings.append({
+                'id': row[0],
+                'location_name': row[1],
+                'latitude': row[2],
+                'longitude': row[3],
+                'aqi': row[4],
+                'pm25': row[5],
+                'pm10': row[6],
+                'temp': row[7],
+                'humidity': row[8],
+                'timestamp': row[9],
+                'created_at': row[10]
+            })
+        
+        conn.close()
+        
+        return jsonify({
+            'readings': readings,
+            'count': len(readings)
+        })
+        
+    except Exception as e:
+        print(f"Readings fetch error: {e}")
+        return jsonify({'error': str(e), 'readings': []}), 500
 
 @app.route('/api/status')
 def system_status():
-    conn = sqlite3.connect('data/air_quality.db')
-    count = conn.execute('SELECT COUNT(*) FROM readings').fetchone()[0]
-    conn.close()
-    
-    return jsonify({
-        'sensors': 'hardware' if HAS_SENSORS else 'simulation',
-        'database': 'connected',
-        'reading_count': count,
-        'sensor_status': 'active' if any(SENSOR_DATA.values()) else 'initializing'
-    })
+    try:
+        conn = sqlite3.connect('data/air_quality.db')
+        count = conn.execute('SELECT COUNT(*) FROM readings').fetchone()[0]
+        conn.close()
+        
+        return jsonify({
+            'sensors': 'hardware' if HAS_SENSORS else 'simulation',
+            'database': 'connected',
+            'reading_count': count,
+            'sensor_status': 'active' if any(SENSOR_DATA.values()) else 'initializing'
+        })
+    except Exception as e:
+        return jsonify({
+            'sensors': 'hardware' if HAS_SENSORS else 'simulation',
+            'database': 'error',
+            'reading_count': 0,
+            'sensor_status': 'error',
+            'error': str(e)
+        })
 
 @app.route('/api/map-status')
 def map_status():
-    tile_count = sum(1 for root, dirs, files in os.walk('static/tiles') 
-                     for f in files if f.endswith('.png'))
-    return jsonify({
-        'ready': True,
-        'available_tiles': tile_count,
-        'progress': {'downloaded': tile_count, 'total': tile_count, 'percentage': 100}
-    })
+    try:
+        tile_count = sum(1 for root, dirs, files in os.walk('static/tiles') 
+                         for f in files if f.endswith('.png'))
+        return jsonify({
+            'ready': True,
+            'available_tiles': tile_count,
+            'progress': {'downloaded': tile_count, 'total': tile_count, 'percentage': 100}
+        })
+    except:
+        return jsonify({
+            'ready': False,
+            'available_tiles': 0,
+            'progress': {'downloaded': 0, 'total': 0, 'percentage': 0}
+        })
 
 if __name__ == '__main__':
+    # Initialize database
     init_db()
     
     # Start continuous sensor reading in background

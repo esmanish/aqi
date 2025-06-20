@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NITK Air Quality - Offline</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {margin:0; padding:0; box-sizing:border-box;}
+        body {font-family:system-ui; background:#f5f5f7;}
+        .header {background:#fff; padding:16px 24px; border-bottom:1px solid #ddd; display:flex; justify-content:space-between; align-items:center;}
+        .header h1 {color:#007AFF; font-size:24px;}
+        .status {padding:6px 12px; background:#e3f2fd; border-radius:16px; font-size:14px; color:#1976d2;}
+        .container {display:grid; grid-template-columns:1fr 300px; gap:20px; padding:20px; height:calc(100vh - 73px);}
+        .map-section {background:#fff; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.08); display:flex; flex-direction:column; overflow:hidden;}
+        .map-header {padding:16px 20px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center;}
+        #map {flex:1; min-height:400px; background:#f5f5f5;}
+        .btn {padding:8px 16px; background:#007AFF; color:#fff; border:none; border-radius:8px; cursor:pointer; font-weight:500;}
+        .btn:hover {background:#0056CC;}
+        .btn:disabled {background:#ccc; cursor:not-allowed;}
+        .sidebar {display:flex; flex-direction:column; gap:16px; position:relative;}
+        .widget {background:#fff; border-radius:12px; padding:20px; box-shadow:0 2px 10px rgba(0,0,0,0.05);}
+        .widget h4 {margin-bottom:16px; color:#333;}
+        .aqi-display {text-align:center; padding:24px; background:#f0f9ff; border-radius:12px; margin-bottom:16px;}
+        .aqi-value {font-size:48px; font-weight:700; color:#007AFF; margin:8px 0;}
+        .metrics {display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+        .metric {background:#fafafa; padding:14px; border-radius:8px; text-align:center;}
+        .metric strong {display:block; font-size:20px; color:#333; margin-bottom:4px;}
+        
+        /* Collection Modal */
+        .modal {display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:1000;}
+        .modal-content {
+            position:absolute; 
+            top:50%; 
+            left:50%; 
+            transform:translate(-50%,-50%); 
+            background:#fff; 
+            padding:28px; 
+            border-radius:16px; 
+            width:90%; 
+            max-width:600px; 
+            max-height:80vh; 
+            overflow-y:auto; 
+            box-shadow:0 20px 40px rgba(0,0,0,0.15);
+            transition: all 0.3s ease;
+        }
+        .modal-content.minimized {
+            position:fixed;
+            top:auto;
+            bottom:20px;
+            right:20px;
+            left:auto;
+            transform:none;
+            width:300px;
+            max-height:200px;
+            padding:16px;
+        }
+        .modal-header {
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            margin-bottom:20px;
+        }
+        .minimize-btn {
+            background:none;
+            border:none;
+            font-size:20px;
+            cursor:pointer;
+            color:#666;
+            padding:4px 8px;
+        }
+        .minimize-btn:hover {color:#007AFF;}
+        
+        /* Form styles */
+        .form-group {margin-bottom:16px;}
+        .form-group label {display:block; margin-bottom:6px; font-weight:500; color:#333;}
+        .form-group input {width:100%; padding:10px 14px; border:1px solid #ddd; border-radius:8px;}
+        .coords-display {
+            background:#f8f9fa;
+            padding:12px;
+            border-radius:8px;
+            font-family:monospace;
+            font-size:14px;
+            color:#666;
+            margin:12px 0;
+        }
+        
+        /* Progress */
+        .progress-container {margin:20px 0;}
+        .progress-bar {width:100%; height:20px; background:#f0f0f0; border-radius:10px; overflow:hidden;}
+        .progress-fill {height:100%; background:linear-gradient(90deg, #007AFF, #0056CC); transition:width 0.5s ease; width:0%;}
+        .progress-text {text-align:center; margin-top:8px; font-size:14px; color:#666;}
+        
+        /* Charts */
+        .chart-container {margin:20px 0; height:250px; position:relative;}
+        .minimized .chart-container {display:none;}
+        .minimized .form-content {display:none;}
+        
+        /* Mini Progress Widget */
+        .mini-progress {
+            display:none;
+            position:fixed;
+            bottom:20px;
+            right:20px;
+            background:#fff;
+            border-radius:12px;
+            padding:16px 20px;
+            box-shadow:0 4px 20px rgba(0,0,0,0.15);
+            z-index:900;
+            min-width:250px;
+        }
+        .mini-progress h5 {
+            margin:0 0 8px 0;
+            color:#333;
+            font-size:14px;
+        }
+        .mini-progress .progress-bar {
+            height:8px;
+            margin:8px 0;
+        }
+        .mini-progress .stats {
+            display:flex;
+            justify-content:space-between;
+            font-size:12px;
+            color:#666;
+            margin-top:8px;
+        }
+        
+        /* Map markers */
+        .aqi-marker {
+            background:#fff; 
+            border:3px solid #007AFF; 
+            border-radius:50%; 
+            width:40px; 
+            height:40px; 
+            display:flex; 
+            align-items:center; 
+            justify-content:center; 
+            font-weight:bold; 
+            font-size:14px;
+            box-shadow:0 2px 8px rgba(0,0,0,0.2);
+            cursor:pointer;
+        }
+        .aqi-good {background:#4caf50; color:white; border-color:#4caf50;}
+        .aqi-moderate {background:#ffc107; color:white; border-color:#ffc107;}
+        .aqi-unhealthy-sensitive {background:#ff9800; color:white; border-color:#ff9800;}
+        .aqi-unhealthy {background:#f44336; color:white; border-color:#f44336;}
+        .aqi-very-unhealthy {background:#9c27b0; color:white; border-color:#9c27b0;}
+        
+        /* Detailed popup */
+        .detailed-popup {
+            min-width:400px;
+            max-width:500px;
+        }
+        .popup-header {
+            text-align:center;
+            padding-bottom:12px;
+            border-bottom:1px solid #eee;
+            margin-bottom:12px;
+        }
+        .popup-header h4 {
+            margin:0 0 8px 0;
+            color:#333;
+            font-size:18px;
+        }
+        .popup-aqi-large {
+            font-size:48px;
+            font-weight:bold;
+            margin:8px 0;
+        }
+        .popup-grid {
+            display:grid;
+            grid-template-columns:1fr 1fr;
+            gap:12px;
+            margin:12px 0;
+        }
+        .popup-stat {
+            background:#f8f9fa;
+            padding:12px;
+            border-radius:8px;
+            text-align:center;
+        }
+        .popup-stat strong {
+            display:block;
+            font-size:20px;
+            color:#333;
+            margin-bottom:4px;
+        }
+        .popup-stat span {
+            font-size:12px;
+            color:#666;
+        }
+        .popup-chart {
+            height:150px;
+            margin:16px 0;
+        }
+        .popup-footer {
+            font-size:12px;
+            color:#999;
+            text-align:center;
+            padding-top:12px;
+            border-top:1px solid #eee;
+            margin-top:12px;
+        }
+        
+        .leaflet-popup-content-wrapper {
+            border-radius:12px;
+        }
+        .leaflet-popup-content {
+            margin:0;
+            padding:20px;
+        }
+        
+        @media (max-width:768px) {
+            .container {grid-template-columns:1fr; padding:10px;}
+            .detailed-popup {min-width:280px; max-width:320px;}
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🌱 NITK Air Quality Monitor</h1>
+        <div class="status" id="status">Initializing...</div>
+    </div>
+    
+    <div class="container">
+        <div class="map-section">
+            <div class="map-header">
+                <h3>Campus Air Quality Map</h3>
+                <button class="btn" onclick="openModal()" id="collectBtn">📊 Collect Data</button>
+            </div>
+            <div id="map"></div>
+        </div>
+        
+        <div class="sidebar">
+            <div class="widget">
+                <h4>Current Air Quality</h4>
+                <div class="aqi-display">
+                    <div>Air Quality Index</div>
+                    <div class="aqi-value" id="aqi">--</div>
+                    <div id="aqi-status">Measuring...</div>
+                </div>
+                <div class="metrics">
+                    <div class="metric"><strong id="pm25">--</strong><span>PM2.5 μg/m³</span></div>
+                    <div class="metric"><strong id="pm10">--</strong><span>PM10 μg/m³</span></div>
+                    <div class="metric"><strong id="temp">--</strong><span>Temperature °C</span></div>
+                    <div class="metric"><strong id="humidity">--</strong><span>Humidity %</span></div>
+                </div>
+            </div>
+            
+            <div class="widget">
+                <h4>System Status</h4>
+                <div id="collection-status">Ready to collect data at any campus location</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Data Collection Modal -->
+    <div class="modal" id="modal">
+        <div class="modal-content" id="modalContent">
+            <div class="modal-header">
+                <h3>📊 Data Collection</h3>
+                <button class="minimize-btn" onclick="toggleMinimize()" id="minimizeBtn" style="display:none;">−</button>
+            </div>
+            
+            <form id="collectionForm" onsubmit="startCollection(event)">
+                <div class="form-content">
+                    <div class="form-group">
+                        <label>Location Name</label>
+                        <input type="text" id="location" placeholder="e.g., Main Building, Library" required>
+                    </div>
+                    
+                    <div class="coords-display">
+                        📍 Collection Point: <span id="coordsDisplay">--</span>
+                    </div>
+                    
+                    <p style="color:#666; font-size:14px; margin:10px 0;">
+                        ⏱️ Collection duration: 2 minutes<br>
+                        📊 Real-time monitoring of PM2.5, PM10, Temperature & Humidity
+                    </p>
+                </div>
+                
+                <!-- Progress section -->
+                <div class="progress-container" id="progressContainer" style="display:none;">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="progress-text" id="progressText">Starting collection...</div>
+                </div>
+                
+                <!-- Live chart -->
+                <div class="chart-container" id="chartContainer" style="display:none;">
+                    <canvas id="liveChart"></canvas>
+                </div>
+                
+                <div style="display:flex; gap:12px; justify-content:flex-end; margin-top:24px;">
+                    <button type="button" onclick="closeModal()" class="btn" style="background:#e0e0e0; color:#333;" id="cancelBtn">Cancel</button>
+                    <button type="submit" class="btn" id="startBtn">Start Collection</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Mini Progress Widget -->
+    <div class="mini-progress" id="miniProgress">
+        <h5>📊 Collecting Data</h5>
+        <div><strong id="miniLocation">--</strong></div>
+        <div class="progress-bar">
+            <div class="progress-fill" id="miniProgressFill"></div>
+        </div>
+        <div class="stats">
+            <span id="miniTime">0s / 120s</span>
+            <span id="miniPercent">0%</span>
+        </div>
+        <button class="btn" onclick="maximizeModal()" style="width:100%; margin-top:12px; padding:6px;">View Details</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script>
+        let map, collectionInterval, updateInterval, liveChart;
+        let collectionStartTime, collectionData = [];
+        let isMinimized = false;
+        let allReadings = {};
+        const COLLECTION_DURATION = 120; // 2 minutes
+        const NITK = {center:[13.01081689345183,74.79424209021532], bounds:{north:13.018,south:13.004,east:74.802,west:74.780}, minZoom:14, maxZoom:19};
+        
+        function initMap() {
+            map = L.map('map', {
+                center: NITK.center, zoom: 16, minZoom: NITK.minZoom, maxZoom: NITK.maxZoom,
+                maxBounds: [[NITK.bounds.south-0.001, NITK.bounds.west-0.001], [NITK.bounds.north+0.001, NITK.bounds.east+0.001]],
+                maxBoundsViscosity: 1.0, attributionControl: false
+            });
+            
+            L.tileLayer('/tiles/{z}/{x}/{y}.png', {maxZoom: NITK.maxZoom, minZoom: NITK.minZoom}).addTo(map);
+            
+            L.rectangle([[NITK.bounds.south, NITK.bounds.west], [NITK.bounds.north, NITK.bounds.east]], {
+                color: '#007AFF', weight: 2, fillOpacity: 0, dashArray: '10,10', interactive: false
+            }).addTo(map);
+            
+            L.marker(NITK.center).addTo(map).bindPopup('<div style="text-align:center"><h4>🏛️ NITK Surathkal</h4></div>');
+            
+            // Update coordinates display when map moves
+            map.on('moveend', updateCoordsDisplay);
+        }
+        
+        function updateCoordsDisplay() {
+            const center = map.getCenter();
+            document.getElementById('coordsDisplay').textContent = 
+                `${center.lat.toFixed(6)}, ${center.lng.toFixed(6)}`;
+        }
+        
+        async function updateData() {
+            try {
+                const res = await fetch('/api/realtime');
+                const data = await res.json();
+                document.getElementById('aqi').textContent = data.aqi || '--';
+                document.getElementById('pm25').textContent = data.pm25?.toFixed(1) || '--';
+                document.getElementById('pm10').textContent = data.pm10?.toFixed(1) || '--';
+                document.getElementById('temp').textContent = data.temperature?.toFixed(1) || '--';
+                document.getElementById('humidity').textContent = data.humidity?.toFixed(0) || '--';
+                document.getElementById('aqi-status').textContent = getAQIStatus(data.aqi);
+                document.getElementById('aqi').style.color = getAQIColor(data.aqi);
+                document.getElementById('status').textContent = 'System Active';
+            } catch(e) {
+                document.getElementById('status').textContent = 'Offline Mode';
+            }
+        }
+        
+        function getAQIStatus(aqi) {
+            if (!aqi) return 'No Data';
+            if (aqi <= 50) return '😊 Good';
+            if (aqi <= 100) return '😐 Moderate';
+            if (aqi <= 150) return '😷 Unhealthy for Sensitive';
+            if (aqi <= 200) return '😨 Unhealthy';
+            return '😱 Very Unhealthy';
+        }
+        
+        function getAQIColor(aqi) {
+            if (!aqi) return '#999';
+            if (aqi <= 50) return '#4CAF50';
+            if (aqi <= 100) return '#FFC107';
+            if (aqi <= 150) return '#FF9800';
+            if (aqi <= 200) return '#F44336';
+            return '#9C27B0';
+        }
+        
+        function getAQIClass(aqi) {
+            if (aqi <= 50) return 'aqi-good';
+            if (aqi <= 100) return 'aqi-moderate';
+            if (aqi <= 150) return 'aqi-unhealthy-sensitive';
+            if (aqi <= 200) return 'aqi-unhealthy';
+            return 'aqi-very-unhealthy';
+        }
+        
+        function openModal() {
+            document.getElementById('modal').style.display = 'block';
+            updateCoordsDisplay();
+            
+            // Reset form
+            document.getElementById('location').value = '';
+            document.getElementById('progressContainer').style.display = 'none';
+            document.getElementById('chartContainer').style.display = 'none';
+            document.getElementById('startBtn').style.display = 'inline-block';
+            document.getElementById('startBtn').textContent = 'Start Collection';
+            document.getElementById('cancelBtn').textContent = 'Cancel';
+            document.getElementById('minimizeBtn').style.display = 'none';
+            isMinimized = false;
+        }
+        
+        function closeModal() {
+            document.getElementById('modal').style.display = 'none';
+            document.getElementById('miniProgress').style.display = 'none';
+            
+            // Clear any ongoing collection
+            if (collectionInterval) {
+                clearInterval(collectionInterval);
+                collectionInterval = null;
+            }
+            if (updateInterval) {
+                clearInterval(updateInterval);
+                updateInterval = null;
+            }
+            
+            // Destroy chart
+            if (liveChart) {
+                liveChart.destroy();
+                liveChart = null;
+            }
+        }
+        
+        function toggleMinimize() {
+            isMinimized = !isMinimized;
+            const modalContent = document.getElementById('modalContent');
+            const miniProgress = document.getElementById('miniProgress');
+            
+            if (isMinimized) {
+                modalContent.classList.add('minimized');
+                miniProgress.style.display = 'block';
+                document.getElementById('minimizeBtn').textContent = '+';
+            } else {
+                modalContent.classList.remove('minimized');
+                miniProgress.style.display = 'none';
+                document.getElementById('minimizeBtn').textContent = '−';
+            }
+        }
+        
+        function maximizeModal() {
+            isMinimized = false;
+            document.getElementById('modalContent').classList.remove('minimized');
+            document.getElementById('miniProgress').style.display = 'none';
+            document.getElementById('minimizeBtn').textContent = '−';
+        }
+        
+        function initChart() {
+            const ctx = document.getElementById('liveChart').getContext('2d');
+            liveChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'PM2.5',
+                        data: [],
+                        borderColor: '#007AFF',
+                        backgroundColor: 'rgba(0, 122, 255, 0.1)',
+                        tension: 0.4,
+                        yAxisID: 'y'
+                    }, {
+                        label: 'PM10',
+                        data: [],
+                        borderColor: '#FF9800',
+                        backgroundColor: 'rgba(255, 152, 0, 0.1)',
+                        tension: 0.4,
+                        yAxisID: 'y'
+                    }, {
+                        label: 'Temperature',
+                        data: [],
+                        borderColor: '#4CAF50',
+                        backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                        tension: 0.4,
+                        yAxisID: 'y1'
+                    }, {
+                        label: 'Humidity',
+                        data: [],
+                        borderColor: '#2196F3',
+                        backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                        tension: 0.4,
+                        yAxisID: 'y2'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        legend: {position: 'top'},
+                        title: {display: true, text: 'Real-time Sensor Data'}
+                    },
+                    scales: {
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: {display: true, text: 'PM (μg/m³)'}
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: {display: true, text: 'Temp (°C)'},
+                            grid: {drawOnChartArea: false}
+                        },
+                        y2: {
+                            type: 'linear',
+                            display: false,
+                            position: 'right',
+                            title: {display: true, text: 'Humidity (%)'}
+                        }
+                    }
+                }
+            });
+        }
+        
+        async function startCollection(e) {
+            e.preventDefault();
+            
+            const location = document.getElementById('location').value;
+            const center = map.getCenter();
+            const lat = center.lat;
+            const lng = center.lng;
+            
+            // Show progress elements
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('chartContainer').style.display = 'block';
+            document.getElementById('startBtn').style.display = 'none';
+            document.getElementById('cancelBtn').textContent = 'Stop';
+            document.getElementById('minimizeBtn').style.display = 'inline-block';
+            
+            // Update mini progress
+            document.getElementById('miniLocation').textContent = location;
+            
+            // Initialize chart
+            initChart();
+            
+            // Reset collection data
+            collectionData = [];
+            collectionStartTime = Date.now();
+            
+            // Update collection status
+            document.getElementById('collection-status').innerHTML = 
+                `<div class="collection-active">🔴 Collecting data at ${location}...</div>`;
+            
+            // Start progress update
+            let elapsed = 0;
+            collectionInterval = setInterval(() => {
+                elapsed++;
+                const progress = (elapsed / COLLECTION_DURATION) * 100;
+                
+                // Update main progress
+                document.getElementById('progressFill').style.width = progress + '%';
+                document.getElementById('progressText').textContent = 
+                    `Collecting: ${elapsed}s / ${COLLECTION_DURATION}s (${Math.round(progress)}%)`;
+                
+                // Update mini progress
+                document.getElementById('miniProgressFill').style.width = progress + '%';
+                document.getElementById('miniTime').textContent = `${elapsed}s / ${COLLECTION_DURATION}s`;
+                document.getElementById('miniPercent').textContent = `${Math.round(progress)}%`;
+                
+                if (elapsed >= COLLECTION_DURATION) {
+                    completeCollection(location, lat, lng);
+                }
+            }, 1000);
+            
+            // Start data update
+            updateInterval = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/realtime');
+                    const data = await res.json();
+                    
+                    // Add data to collection
+                    collectionData.push(data);
+                    
+                    // Update chart
+                    const timeLabel = new Date().toLocaleTimeString();
+                    liveChart.data.labels.push(timeLabel);
+                    liveChart.data.datasets[0].data.push(data.pm25);
+                    liveChart.data.datasets[1].data.push(data.pm10);
+                    liveChart.data.datasets[2].data.push(data.temperature);
+                    liveChart.data.datasets[3].data.push(data.humidity);
+                    
+                    // Keep only last 20 points
+                    if (liveChart.data.labels.length > 20) {
+                        liveChart.data.labels.shift();
+                        liveChart.data.datasets.forEach(dataset => dataset.data.shift());
+                    }
+                    
+                    liveChart.update();
+                } catch(e) {
+                    console.error('Data update error:', e);
+                }
+            }, 3000);
+        }
+        
+        async function completeCollection(location, lat, lng) {
+            // Stop intervals
+            clearInterval(collectionInterval);
+            clearInterval(updateInterval);
+            
+            // Calculate averages
+            const avgData = {
+                pm25: collectionData.reduce((sum, d) => sum + d.pm25, 0) / collectionData.length,
+                pm10: collectionData.reduce((sum, d) => sum + d.pm10, 0) / collectionData.length,
+                temperature: collectionData.reduce((sum, d) => sum + d.temperature, 0) / collectionData.length,
+                humidity: collectionData.reduce((sum, d) => sum + d.humidity, 0) / collectionData.length
+            };
+            
+            // Save to database
+            try {
+                const res = await fetch('/api/collect', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        locationName: location,
+                        latitude: lat,
+                        longitude: lng,
+                        duration: COLLECTION_DURATION
+                    })
+                });
+                const result = await res.json();
+                
+                // Store complete data
+                allReadings[result.id || Date.now()] = {
+                    location: location,
+                    data: result,
+                    collectionData: collectionData,
+                    avgData: avgData
+                };
+                
+                // Add permanent marker to map
+                addDataMarker(location, lat, lng, result);
+                
+                // Update UI
+                document.getElementById('progressText').textContent = '✅ Collection Complete!';
+                document.getElementById('progressFill').style.width = '100%';
+                document.getElementById('progressFill').style.background = '#4CAF50';
+                
+                document.getElementById('collection-status').innerHTML = 
+                    `<div class="collection-complete">
+                        ✅ <strong>${location}</strong><br>
+                        AQI: ${result.aqi} | PM2.5: ${result.pm25.toFixed(1)} μg/m³<br>
+                        <small>Completed at ${new Date().toLocaleTimeString()}</small>
+                    </div>`;
+                
+                // Close modal after 2 seconds
+                setTimeout(closeModal, 2000);
+                
+            } catch(e) {
+                alert('Failed to save collection data: ' + e.message);
+            }
+        }
+        
+        function createDetailedPopup(location, data, readingId) {
+            const collectionInfo = allReadings[readingId];
+            
+            let chartHtml = '';
+            if (collectionInfo && collectionInfo.collectionData.length > 0) {
+                chartHtml = '<div class="popup-chart"><canvas id="popupChart' + readingId + '"></canvas></div>';
+            }
+            
+            return `
+                <div class="detailed-popup">
+                    <div class="popup-header">
+                        <h4>${location}</h4>
+                        <div class="popup-aqi-large" style="color:${getAQIColor(data.aqi)}">
+                            ${data.aqi}
+                        </div>
+                        <div style="color:#666; font-size:14px;">
+                            ${getAQIStatus(data.aqi)}
+                        </div>
+                    </div>
+                    
+                    <div class="popup-grid">
+                        <div class="popup-stat">
+                            <strong>${data.pm25.toFixed(1)}</strong>
+                            <span>PM2.5 μg/m³</span>
+                        </div>
+                        <div class="popup-stat">
+                            <strong>${data.pm10.toFixed(1)}</strong>
+                            <span>PM10 μg/m³</span>
+                        </div>
+                        <div class="popup-stat">
+                            <strong>${data.temperature.toFixed(1)}°C</strong>
+                            <span>Temperature</span>
+                        </div>
+                        <div class="popup-stat">
+                            <strong>${data.humidity.toFixed(0)}%</strong>
+                            <span>Humidity</span>
+                        </div>
+                    </div>
+                    
+                    ${chartHtml}
+                    
+                    <div class="popup-footer">
+                        📅 ${new Date(data.timestamp).toLocaleString()}<br>
+                        ⏱️ Collection Duration: 2 minutes<br>
+                        📍 ${data.latitude?.toFixed(6) || '--'}, ${data.longitude?.toFixed(6) || '--'}
+                    </div>
+                </div>
+            `;
+        }
+        
+        function addDataMarker(location, lat, lng, data) {
+            const readingId = data.id || Date.now();
+            const color = getAQIColor(data.aqi);
+            const className = getAQIClass(data.aqi);
+            
+            const marker = L.marker([lat, lng], {
+                icon: L.divIcon({
+                    className: 'aqi-marker ' + className,
+                    html: `<div class="aqi-marker ${className}">${data.aqi}</div>`,
+                    iconSize: [40, 40],
+                    iconAnchor: [20, 20]
+                })
+            }).addTo(map);
+            
+            const popupContent = createDetailedPopup(location, data, readingId);
+            marker.bindPopup(popupContent, {maxWidth: 500});
+            
+            // Add chart to popup when it opens
+            marker.on('popupopen', () => {
+                const collectionInfo = allReadings[readingId];
+                if (collectionInfo && collectionInfo.collectionData.length > 0) {
+                    setTimeout(() => {
+                        const canvas = document.getElementById('popupChart' + readingId);
+                        if (canvas) {
+                            const ctx = canvas.getContext('2d');
+                            new Chart(ctx, {
+                                type: 'line',
+                                data: {
+                                    labels: collectionInfo.collectionData.map((_, i) => i * 3 + 's'),
+                                    datasets: [{
+                                        label: 'PM2.5',
+                                        data: collectionInfo.collectionData.map(d => d.pm25),
+                                        borderColor: '#007AFF',
+                                        tension: 0.4
+                                    }, {
+                                        label: 'PM10',
+                                        data: collectionInfo.collectionData.map(d => d.pm10),
+                                        borderColor: '#FF9800',
+                                        tension: 0.4
+                                    }]
+                                },
+                                options: {
+                                    responsive: true,
+                                    maintainAspectRatio: false,
+                                    plugins: {
+                                        legend: {display: true, position: 'bottom'},
+                                        title: {display: true, text: 'Collection History'}
+                                    },
+                                    scales: {
+                                        y: {title: {display: true, text: 'PM (μg/m³)'}}
+                                    }
+                                }
+                            });
+                        }
+                    }, 100);
+                }
+            });
+        }
+        
+        window.onclick = e => {
+            if (e.target.id === 'modal' && !collectionInterval) {
+                if (!isMinimized) closeModal();
+            }
+        }
+        
+        // Initialize
+        initMap();
+        updateData();
+        setInterval(updateData, 5000);
+        
+        // Load existing data points
+        fetch('/api/readings').then(res => res.json()).then(data => {
+            if (data.readings) {
+                data.readings.forEach(reading => {
+                    if (reading.location_name && reading.latitude && reading.longitude) {
+                        const readingData = {
+                            id: reading.id,
+                            aqi: reading.aqi,
+                            pm25: reading.pm25,
+                            pm10: reading.pm10,
+                            temperature: reading.temp,
+                            humidity: reading.humidity,
+                            timestamp: reading.timestamp,
+                            latitude: reading.latitude,
+                            longitude: reading.longitude
+                        };
+                        
+                        // Store in memory
+                        allReadings[reading.id] = {
+                            location: reading.location_name,
+                            data: readingData,
+                            collectionData: [],
+                            avgData: {}
+                        };
+                        
+                        addDataMarker(reading.location_name, reading.latitude, reading.longitude, readingData);
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html>

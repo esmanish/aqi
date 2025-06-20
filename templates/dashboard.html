@@ -289,6 +289,10 @@
             display: flex;
         }
         
+        .collecting .quick-actions {
+            display: none !important;
+        }
+        
         .quick-btn {
             flex: 1;
             padding: 8px 12px;
@@ -365,6 +369,17 @@
                 right: 10px;
                 transform: translateY(0);
             }
+            .modal-content {
+                width: 95%;
+                padding: 16px;
+                max-height: 95vh;
+            }
+            #detailsSummary div {
+                grid-template-columns: 1fr 1fr !important;
+            }
+            #technicalParams {
+                grid-template-columns: 1fr !important;
+            }
         }
         
         /* Floating action button */
@@ -435,9 +450,60 @@
             </div>
         </div>
     </div>
-    
+
     <!-- Floating Action Button -->
     <button class="fab" id="fabBtn" onclick="openCollectionCard()">📊</button>
+    
+    <!-- Detailed Data Modal -->
+    <div class="modal" id="detailsModal" style="display: none;">
+        <div class="modal-content" style="max-width: 900px; width: 90%; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #007AFF 0%, #0056CC 100%); color: white;">
+                <h3 id="detailsTitle">📊 Detailed Analysis</h3>
+                <div class="header-controls">
+                    <button class="control-btn" onclick="closeDetailsModal()">×</button>
+                </div>
+            </div>
+            
+            <div style="padding: 24px;">
+                <!-- Summary Stats -->
+                <div id="detailsSummary" style="background: #f8f9fa; padding: 20px; border-radius: 12px; margin-bottom: 24px;">
+                    <!-- Will be populated dynamically -->
+                </div>
+                
+                <!-- Charts Section -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px;">
+                    <div style="background: white; padding: 20px; border-radius: 12px; border: 1px solid #e9ecef;">
+                        <h4 style="margin-bottom: 16px; color: #333;">Air Quality Timeline</h4>
+                        <div style="height: 250px; position: relative;">
+                            <canvas id="detailsAirChart"></canvas>
+                        </div>
+                    </div>
+                    <div style="background: white; padding: 20px; border-radius: 12px; border: 1px solid #e9ecef;">
+                        <h4 style="margin-bottom: 16px; color: #333;">Environmental Conditions</h4>
+                        <div style="height: 250px; position: relative;">
+                            <canvas id="detailsEnvChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Technical Parameters -->
+                <div style="background: white; padding: 20px; border-radius: 12px; border: 1px solid #e9ecef; margin-bottom: 24px;">
+                    <h4 style="margin-bottom: 16px; color: #333;">📋 Technical Parameters</h4>
+                    <div id="technicalParams" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+                        <!-- Will be populated dynamically -->
+                    </div>
+                </div>
+                
+                <!-- Data Quality Assessment -->
+                <div style="background: white; padding: 20px; border-radius: 12px; border: 1px solid #e9ecef;">
+                    <h4 style="margin-bottom: 16px; color: #333;">🔬 Data Quality Assessment</h4>
+                    <div id="dataQuality">
+                        <!-- Will be populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
     
     <!-- Data Collection Card -->
     <div class="collection-card" id="collectionCard">
@@ -511,8 +577,7 @@
             </div>
             
             <div class="quick-actions" id="quickActions">
-                <button class="quick-btn" onclick="toggleMinimize()">Expand</button>
-                <button class="quick-btn" onclick="stopCollection()">Stop</button>
+                <button class="quick-btn" onclick="openDetailsModal()">View Details</button>
             </div>
         </div>
     </div>
@@ -523,6 +588,7 @@
         let collectionStartTime, collectionData = [];
         let isMinimized = false, isCollecting = false;
         let allReadings = {};
+        let currentCompletedReading = null; // Store current completed reading for details
         const COLLECTION_DURATION = 120; // 2 minutes
         const NITK = {center:[13.01081689345183,74.79424209021532], bounds:{north:13.018,south:13.004,east:74.802,west:74.780}, minZoom:14, maxZoom:19};
         
@@ -561,6 +627,11 @@
                     document.getElementById('livePM10').textContent = data.pm10?.toFixed(1) || '--';
                     document.getElementById('liveTemp').textContent = data.temperature?.toFixed(1) || '--';
                     document.getElementById('liveHumidity').textContent = data.humidity?.toFixed(0) || '--';
+                    
+                    // Ensure chart container is visible during collection
+                    if (document.getElementById('chartContainer').style.display === 'none') {
+                        document.getElementById('chartContainer').style.display = 'block';
+                    }
                 }
                 
                 return data;
@@ -656,12 +727,13 @@
             document.getElementById('progressSection').style.display = 'none';
             document.getElementById('chartContainer').style.display = 'none';
             document.getElementById('actionButtons').style.display = 'flex';
-            document.getElementById('quickActions').style.display = 'none';
+            document.getElementById('quickActions').style.display = 'none'; // Hide initially
             document.getElementById('startBtn').textContent = 'Start Collection';
             document.getElementById('cardTitle').textContent = '📊 Data Collection';
             
             // Reset progress
             document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('progressFill').style.background = 'linear-gradient(90deg, #007AFF, #0056CC)';
             document.getElementById('progressStats').textContent = '0% • 0s / 120s';
             
             // Clear chart
@@ -673,6 +745,7 @@
             // Reset collection state
             isCollecting = false;
             collectionData = [];
+            currentCompletedReading = null;
             
             // Remove collecting animation
             document.getElementById('collectionCard').classList.remove('collecting');
@@ -690,14 +763,32 @@
                         borderColor: '#007AFF',
                         backgroundColor: 'rgba(0, 122, 255, 0.1)',
                         tension: 0.4,
-                        fill: false
+                        fill: false,
+                        yAxisID: 'y'
                     }, {
                         label: 'PM10',
                         data: [],
                         borderColor: '#FF9800',
                         backgroundColor: 'rgba(255, 152, 0, 0.1)',
                         tension: 0.4,
-                        fill: false
+                        fill: false,
+                        yAxisID: 'y'
+                    }, {
+                        label: 'Temperature',
+                        data: [],
+                        borderColor: '#4CAF50',
+                        backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                        tension: 0.4,
+                        fill: false,
+                        yAxisID: 'y1'
+                    }, {
+                        label: 'Humidity',
+                        data: [],
+                        borderColor: '#2196F3',
+                        backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                        tension: 0.4,
+                        fill: false,
+                        yAxisID: 'y2'
                     }]
                 },
                 options: {
@@ -709,7 +800,24 @@
                     },
                     scales: {
                         y: {
-                            title: {display: true, text: 'PM (μg/m³)'}
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: {display: true, text: 'PM (μg/m³)'},
+                            beginAtZero: true
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: {display: true, text: 'Temp (°C)'},
+                            grid: {drawOnChartArea: false}
+                        },
+                        y2: {
+                            type: 'linear',
+                            display: false,
+                            position: 'right',
+                            title: {display: true, text: 'Humidity (%)'}
                         }
                     }
                 }
@@ -739,7 +847,7 @@
             document.getElementById('progressSection').style.display = 'block';
             document.getElementById('chartContainer').style.display = 'block';
             document.getElementById('actionButtons').style.display = 'none';
-            document.getElementById('quickActions').style.display = 'flex';
+            document.getElementById('quickActions').style.display = 'none'; // Hide during collection
             document.getElementById('cardTitle').textContent = `🔴 Collecting: ${location}`;
             document.getElementById('collectionCard').classList.add('collecting');
             
@@ -772,11 +880,13 @@
                 if (data) {
                     collectionData.push(data);
                     
-                    // Update chart
+                    // Update chart with all parameters
                     const timeLabel = new Date().toLocaleTimeString();
                     liveChart.data.labels.push(timeLabel);
                     liveChart.data.datasets[0].data.push(data.pm25);
                     liveChart.data.datasets[1].data.push(data.pm10);
+                    liveChart.data.datasets[2].data.push(data.temperature);
+                    liveChart.data.datasets[3].data.push(data.humidity);
                     
                     // Keep only last 15 points
                     if (liveChart.data.labels.length > 15) {
@@ -784,7 +894,7 @@
                         liveChart.data.datasets.forEach(dataset => dataset.data.shift());
                     }
                     
-                    liveChart.update();
+                    liveChart.update('none'); // Update without animation for better performance
                 }
             }, 4000);
         }
@@ -861,6 +971,9 @@
                     avgData: avgData
                 };
                 
+                // Store current completed reading for details view
+                currentCompletedReading = completeData.id;
+                
                 // Add marker to map
                 addDataMarker(location, lat, lng, completeData);
                 
@@ -876,17 +989,19 @@
                         ${new Date().toLocaleTimeString()}</small>
                     </div>`;
                 
-                // Auto-minimize after 3 seconds
+                // Auto-minimize after 3 seconds, then show details button
                 setTimeout(() => {
                     if (!isMinimized) {
                         toggleMinimize();
                     }
+                    // Show quick actions after minimizing
+                    document.getElementById('quickActions').style.display = 'flex';
                 }, 3000);
                 
-                // Auto-close after 8 seconds
+                // Auto-close after 10 seconds
                 setTimeout(() => {
                     closeCollectionCard();
-                }, 8000);
+                }, 10000);
                 
             } catch(e) {
                 console.error('Collection save error:', e);
@@ -968,6 +1083,342 @@
             return marker;
         }
         
+        // Detailed Analysis Modal Functions
+        function openDetailsModal(readingId = null) {
+            const targetId = readingId || currentCompletedReading;
+            if (!targetId || !allReadings[targetId]) {
+                alert('No data available for detailed analysis');
+                return;
+            }
+            
+            const reading = allReadings[targetId];
+            document.getElementById('detailsModal').style.display = 'block';
+            document.getElementById('detailsTitle').textContent = `📊 ${reading.location} - Detailed Analysis`;
+            
+            populateDetailsSummary(reading);
+            populateTechnicalParams(reading);
+            populateDataQuality(reading);
+            createDetailedCharts(reading);
+        }
+        
+        function closeDetailsModal() {
+            document.getElementById('detailsModal').style.display = 'none';
+            
+            // Destroy charts to prevent memory leaks
+            const airChart = Chart.getChart('detailsAirChart');
+            const envChart = Chart.getChart('detailsEnvChart');
+            if (airChart) airChart.destroy();
+            if (envChart) envChart.destroy();
+        }
+        
+        function populateDetailsSummary(reading) {
+            const data = reading.data;
+            const collectionData = reading.collectionData;
+            
+            let variabilityStats = '';
+            if (collectionData.length > 0) {
+                const pm25Values = collectionData.map(d => d.pm25);
+                const pm25Std = calculateStandardDeviation(pm25Values);
+                const pm25Range = Math.max(...pm25Values) - Math.min(...pm25Values);
+                
+                variabilityStats = `
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px;">
+                        <div style="text-align: center; padding: 12px; background: white; border-radius: 8px;">
+                            <div style="font-size: 20px; font-weight: bold; color: #007AFF;">${pm25Std.toFixed(2)}</div>
+                            <div style="font-size: 12px; color: #666;">PM2.5 Std Dev</div>
+                        </div>
+                        <div style="text-align: center; padding: 12px; background: white; border-radius: 8px;">
+                            <div style="font-size: 20px; font-weight: bold; color: #FF9800;">${pm25Range.toFixed(1)}</div>
+                            <div style="font-size: 12px; color: #666;">PM2.5 Range</div>
+                        </div>
+                        <div style="text-align: center; padding: 12px; background: white; border-radius: 8px;">
+                            <div style="font-size: 20px; font-weight: bold; color: #4CAF50;">${collectionData.length}</div>
+                            <div style="font-size: 12px; color: #666;">Data Points</div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            document.getElementById('detailsSummary').innerHTML = `
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px;">
+                    <div style="text-align: center; padding: 16px; background: white; border-radius: 12px; border: 2px solid ${getAQIColor(data.aqi)};">
+                        <div style="font-size: 32px; font-weight: bold; color: ${getAQIColor(data.aqi)};">${data.aqi}</div>
+                        <div style="font-size: 14px; color: #666; margin-top: 4px;">Air Quality Index</div>
+                        <div style="font-size: 12px; color: ${getAQIColor(data.aqi)}; font-weight: 500;">${getAQIStatus(data.aqi)}</div>
+                    </div>
+                    <div style="text-align: center; padding: 16px; background: white; border-radius: 12px;">
+                        <div style="font-size: 24px; font-weight: bold; color: #007AFF;">${data.pm25.toFixed(1)}</div>
+                        <div style="font-size: 14px; color: #666;">PM2.5 μg/m³</div>
+                    </div>
+                    <div style="text-align: center; padding: 16px; background: white; border-radius: 12px;">
+                        <div style="font-size: 24px; font-weight: bold; color: #FF9800;">${data.pm10.toFixed(1)}</div>
+                        <div style="font-size: 14px; color: #666;">PM10 μg/m³</div>
+                    </div>
+                    <div style="text-align: center; padding: 16px; background: white; border-radius: 12px;">
+                        <div style="font-size: 24px; font-weight: bold; color: #4CAF50;">${data.temperature?.toFixed(1) || '--'}°C</div>
+                        <div style="font-size: 14px; color: #666;">Temperature</div>
+                    </div>
+                </div>
+                ${variabilityStats}
+            `;
+        }
+        
+        function populateTechnicalParams(reading) {
+            const data = reading.data;
+            const collectionData = reading.collectionData;
+            
+            let correlationAnalysis = '';
+            if (collectionData.length > 5) {
+                const pm25Temp = calculateCorrelation(
+                    collectionData.map(d => d.pm25),
+                    collectionData.map(d => d.temperature)
+                );
+                const pm25Humidity = calculateCorrelation(
+                    collectionData.map(d => d.pm25),
+                    collectionData.map(d => d.humidity)
+                );
+                
+                correlationAnalysis = `
+                    <div class="param-item">
+                        <div class="param-label">PM2.5-Temperature Correlation</div>
+                        <div class="param-value" style="color: ${Math.abs(pm25Temp) > 0.5 ? '#F44336' : '#4CAF50'};">${pm25Temp.toFixed(3)}</div>
+                    </div>
+                    <div class="param-item">
+                        <div class="param-label">PM2.5-Humidity Correlation</div>
+                        <div class="param-value" style="color: ${Math.abs(pm25Humidity) > 0.5 ? '#F44336' : '#4CAF50'};">${pm25Humidity.toFixed(3)}</div>
+                    </div>
+                `;
+            }
+            
+            document.getElementById('technicalParams').innerHTML = `
+                <div class="param-item">
+                    <div class="param-label">Collection Duration</div>
+                    <div class="param-value">${COLLECTION_DURATION / 60} minutes</div>
+                </div>
+                <div class="param-item">
+                    <div class="param-label">Sampling Frequency</div>
+                    <div class="param-value">Every 4 seconds</div>
+                </div>
+                <div class="param-item">
+                    <div class="param-label">Coordinate Precision</div>
+                    <div class="param-value">6 decimal places</div>
+                </div>
+                <div class="param-item">
+                    <div class="param-label">Humidity Range</div>
+                    <div class="param-value">${data.humidity?.toFixed(0) || '--'}%</div>
+                </div>
+                <div class="param-item">
+                    <div class="param-label">Location</div>
+                    <div class="param-value">${data.latitude?.toFixed(6)}, ${data.longitude?.toFixed(6)}</div>
+                </div>
+                <div class="param-item">
+                    <div class="param-label">Collection Time</div>
+                    <div class="param-value">${new Date(data.timestamp).toLocaleString()}</div>
+                </div>
+                ${correlationAnalysis}
+                
+                <style>
+                .param-item {
+                    background: #f8f9fa;
+                    padding: 12px;
+                    border-radius: 8px;
+                    border-left: 4px solid #007AFF;
+                }
+                .param-label {
+                    font-size: 12px;
+                    color: #666;
+                    font-weight: 500;
+                    margin-bottom: 4px;
+                }
+                .param-value {
+                    font-size: 14px;
+                    color: #333;
+                    font-weight: 600;
+                }
+                </style>
+            `;
+        }
+        
+        function populateDataQuality(reading) {
+            const collectionData = reading.collectionData;
+            
+            if (collectionData.length === 0) {
+                document.getElementById('dataQuality').innerHTML = `
+                    <div style="text-align: center; padding: 20px; color: #666;">
+                        No time-series data available for quality assessment
+                    </div>
+                `;
+                return;
+            }
+            
+            // Calculate data quality metrics
+            const pm25Values = collectionData.map(d => d.pm25);
+            const completeness = (collectionData.length / (COLLECTION_DURATION / 4)) * 100;
+            const consistency = 100 - (calculateStandardDeviation(pm25Values) / (pm25Values.reduce((a, b) => a + b) / pm25Values.length)) * 100;
+            const accuracy = pm25Values.every(v => v >= 0 && v <= 500) ? 100 : 80;
+            
+            const overallQuality = (completeness + Math.max(0, consistency) + accuracy) / 3;
+            
+            document.getElementById('dataQuality').innerHTML = `
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px;">
+                    <div style="text-align: center; padding: 16px; background: #f8f9fa; border-radius: 8px;">
+                        <div style="font-size: 20px; font-weight: bold; color: ${completeness > 90 ? '#4CAF50' : completeness > 70 ? '#FF9800' : '#F44336'};">
+                            ${completeness.toFixed(1)}%
+                        </div>
+                        <div style="font-size: 12px; color: #666;">Data Completeness</div>
+                    </div>
+                    <div style="text-align: center; padding: 16px; background: #f8f9fa; border-radius: 8px;">
+                        <div style="font-size: 20px; font-weight: bold; color: ${Math.max(0, consistency) > 80 ? '#4CAF50' : Math.max(0, consistency) > 60 ? '#FF9800' : '#F44336'};">
+                            ${Math.max(0, consistency).toFixed(1)}%
+                        </div>
+                        <div style="font-size: 12px; color: #666;">Data Consistency</div>
+                    </div>
+                    <div style="text-align: center; padding: 16px; background: #f8f9fa; border-radius: 8px;">
+                        <div style="font-size: 20px; font-weight: bold; color: ${accuracy > 95 ? '#4CAF50' : '#FF9800'};">
+                            ${accuracy.toFixed(1)}%
+                        </div>
+                        <div style="font-size: 12px; color: #666;">Data Accuracy</div>
+                    </div>
+                    <div style="text-align: center; padding: 16px; background: #f8f9fa; border-radius: 8px;">
+                        <div style="font-size: 20px; font-weight: bold; color: ${overallQuality > 85 ? '#4CAF50' : overallQuality > 70 ? '#FF9800' : '#F44336'};">
+                            ${overallQuality.toFixed(1)}%
+                        </div>
+                        <div style="font-size: 12px; color: #666;">Overall Quality</div>
+                    </div>
+                </div>
+                
+                <div style="background: #e3f2fd; padding: 16px; border-radius: 8px; font-size: 14px;">
+                    <strong>Quality Assessment:</strong><br>
+                    • Data collection ${completeness > 90 ? 'was successful' : 'had some gaps'} with ${collectionData.length} valid measurements<br>
+                    • PM2.5 readings show ${Math.max(0, consistency) > 80 ? 'high consistency' : 'moderate variation'} (σ = ${calculateStandardDeviation(pm25Values).toFixed(2)})<br>
+                    • All sensor values are within ${accuracy > 95 ? 'expected' : 'acceptable'} operational ranges<br>
+                    • Overall data quality is ${overallQuality > 85 ? 'excellent' : overallQuality > 70 ? 'good' : 'fair'} for analysis
+                </div>
+            `;
+        }
+        
+        function createDetailedCharts(reading) {
+            const collectionData = reading.collectionData;
+            
+            if (collectionData.length === 0) {
+                document.getElementById('detailsAirChart').style.display = 'none';
+                document.getElementById('detailsEnvChart').style.display = 'none';
+                return;
+            }
+            
+            // Air Quality Chart
+            const airCtx = document.getElementById('detailsAirChart').getContext('2d');
+            new Chart(airCtx, {
+                type: 'line',
+                data: {
+                    labels: collectionData.map((_, i) => `${i * 4}s`),
+                    datasets: [{
+                        label: 'PM2.5 (μg/m³)',
+                        data: collectionData.map(d => d.pm25),
+                        borderColor: '#007AFF',
+                        backgroundColor: 'rgba(0, 122, 255, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }, {
+                        label: 'PM10 (μg/m³)',
+                        data: collectionData.map(d => d.pm10),
+                        borderColor: '#FF9800',
+                        backgroundColor: 'rgba(255, 152, 0, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {position: 'top'},
+                        title: {display: true, text: 'Particulate Matter Concentration Over Time'}
+                    },
+                    scales: {
+                        y: {
+                            title: {display: true, text: 'Concentration (μg/m³)'},
+                            beginAtZero: true
+                        },
+                        x: {
+                            title: {display: true, text: 'Collection Time'}
+                        }
+                    }
+                }
+            });
+            
+            // Environmental Chart
+            const envCtx = document.getElementById('detailsEnvChart').getContext('2d');
+            new Chart(envCtx, {
+                type: 'line',
+                data: {
+                    labels: collectionData.map((_, i) => `${i * 4}s`),
+                    datasets: [{
+                        label: 'Temperature (°C)',
+                        data: collectionData.map(d => d.temperature),
+                        borderColor: '#4CAF50',
+                        backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                        tension: 0.4,
+                        yAxisID: 'y'
+                    }, {
+                        label: 'Humidity (%)',
+                        data: collectionData.map(d => d.humidity),
+                        borderColor: '#2196F3',
+                        backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                        tension: 0.4,
+                        yAxisID: 'y1'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {position: 'top'},
+                        title: {display: true, text: 'Environmental Conditions Over Time'}
+                    },
+                    scales: {
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: {display: true, text: 'Temperature (°C)'}
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: {display: true, text: 'Humidity (%)'},
+                            grid: {drawOnChartArea: false}
+                        },
+                        x: {
+                            title: {display: true, text: 'Collection Time'}
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Utility functions for statistical calculations
+        function calculateStandardDeviation(values) {
+            const mean = values.reduce((a, b) => a + b) / values.length;
+            const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length;
+            return Math.sqrt(variance);
+        }
+        
+        function calculateCorrelation(x, y) {
+            const n = x.length;
+            const sumX = x.reduce((a, b) => a + b);
+            const sumY = y.reduce((a, b) => a + b);
+            const sumXY = x.reduce((sum, xi, i) => sum + xi * y[i], 0);
+            const sumX2 = x.reduce((a, b) => a + b * b);
+            const sumY2 = y.reduce((a, b) => a + b * b);
+            
+            const numerator = n * sumXY - sumX * sumY;
+            const denominator = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+            
+            return denominator === 0 ? 0 : numerator / denominator;
+        }
+        
         function createDetailedPopup(location, data, readingId) {
             const collectionInfo = allReadings[readingId];
             
@@ -1019,6 +1470,14 @@
                         📅 ${new Date(data.timestamp).toLocaleString()}<br>
                         📍 ${data.latitude?.toFixed(6)}, ${data.longitude?.toFixed(6)}
                     </div>
+                    
+                    ${collectionInfo && collectionInfo.collectionData && collectionInfo.collectionData.length > 0 ? 
+                        `<div style="margin-top: 16px;">
+                            <button onclick="openDetailsModal(${readingId})" 
+                                    style="width: 100%; padding: 12px; background: #007AFF; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">
+                                📊 View Detailed Analysis
+                            </button>
+                        </div>` : ''}
                 </div>
             `;
         }

@@ -474,6 +474,50 @@ def get_collection_data(reading_id):
         print(f"❌ Error retrieving collection data: {e}")
         return jsonify({'error': 'Failed to retrieve collection data', 'collection_data': []}), 500
 
+@app.route('/api/readings/<int:reading_id>', methods=['DELETE'])
+def delete_reading(reading_id):
+    """Delete a specific reading and all its collection data"""
+    try:
+        conn = sqlite3.connect('data/air_quality.db')
+        cursor = conn.cursor()
+        
+        # Check if reading exists
+        cursor.execute('SELECT location_name FROM readings WHERE id = ?', (reading_id,))
+        reading = cursor.fetchone()
+        
+        if not reading:
+            conn.close()
+            return jsonify({'error': 'Reading not found'}), 404
+        
+        location_name = reading[0]
+        
+        # Delete collection data first (foreign key constraint)
+        cursor.execute('DELETE FROM collection_data WHERE reading_id = ?', (reading_id,))
+        collection_deleted = cursor.rowcount
+        
+        # Delete the main reading
+        cursor.execute('DELETE FROM readings WHERE id = ?', (reading_id,))
+        reading_deleted = cursor.rowcount
+        
+        conn.commit()
+        conn.close()
+        
+        if reading_deleted > 0:
+            print(f"✅ Deleted reading ID={reading_id}, Location='{location_name}', Collection points={collection_deleted}")
+            return jsonify({
+                'id': reading_id,
+                'location': location_name,
+                'collection_points_deleted': collection_deleted,
+                'status': 'success',
+                'message': f'Successfully deleted reading from {location_name}'
+            })
+        else:
+            return jsonify({'error': 'Failed to delete reading'}), 500
+            
+    except Exception as e:
+        print(f"❌ Delete error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 @app.route('/api/status')
 def system_status():
     """Get system status and health information"""

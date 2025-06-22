@@ -22,39 +22,66 @@ SENSOR_LOCK = threading.Lock()
 dht22 = None
 
 def init_db():
+    """Initialize the SQLite database with proper schema"""
     os.makedirs('data', exist_ok=True)
     conn = sqlite3.connect('data/air_quality.db')
+    
+    # Create main readings table
     conn.execute('''CREATE TABLE IF NOT EXISTS readings
                     (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                     location_name TEXT, 
-                     latitude REAL, 
-                     longitude REAL,
-                     aqi INTEGER, 
-                     pm25 REAL, 
-                     pm10 REAL, 
-                     temp REAL, 
-                     humidity REAL,
-                     timestamp REAL,
+                     location_name TEXT NOT NULL, 
+                     latitude REAL NOT NULL, 
+                     longitude REAL NOT NULL,
+                     aqi INTEGER NOT NULL, 
+                     pm25 REAL NOT NULL, 
+                     pm10 REAL NOT NULL, 
+                     temp REAL NOT NULL, 
+                     humidity REAL NOT NULL,
+                     timestamp REAL NOT NULL,
                      created_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    
+    # Create collection data points table for time-series data
+    conn.execute('''CREATE TABLE IF NOT EXISTS collection_data
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     reading_id INTEGER NOT NULL,
+                     pm25 REAL NOT NULL,
+                     pm10 REAL NOT NULL,
+                     temperature REAL NOT NULL,
+                     humidity REAL NOT NULL,
+                     timestamp REAL NOT NULL,
+                     sequence_number INTEGER NOT NULL,
+                     FOREIGN KEY (reading_id) REFERENCES readings (id))''')
+    
+    # Create indexes for better performance
+    conn.execute('''CREATE INDEX IF NOT EXISTS idx_timestamp ON readings(timestamp)''')
+    conn.execute('''CREATE INDEX IF NOT EXISTS idx_location ON readings(location_name)''')
+    conn.execute('''CREATE INDEX IF NOT EXISTS idx_reading_id ON collection_data(reading_id)''')
+    
     conn.commit()
     conn.close()
+    print("✅ Database initialized successfully")
 
 def setup_sensors():
+    """Initialize hardware sensors if available"""
     global dht22
     if not HAS_SENSORS:
+        print("📟 Hardware sensors not available - using simulation")
         return
+    
     try:
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
-        GPIO.setup(18, GPIO.IN)  # PM2.5
-        GPIO.setup(19, GPIO.IN)  # PM10
-        dht22 = adafruit_dht.DHT22(board.D27)
-        print("Sensors initialized")
+        GPIO.setup(18, GPIO.IN)  # PM2.5 sensor pin
+        GPIO.setup(19, GPIO.IN)  # PM10 sensor pin
+        dht22 = adafruit_dht.DHT22(board.D27)  # Temperature/Humidity sensor
+        print("✅ Hardware sensors initialized successfully")
     except Exception as e:
-        print(f"Sensor setup failed: {e}")
+        print(f"❌ Sensor setup failed: {e}")
 
 def read_dust_sensor(pin, duration=3):
+    """Read dust sensor data from GPIO pin"""
     if not HAS_SENSORS:
+        # Simulation data with realistic patterns
         return random.uniform(5, 15)
     
     start_time = time.time()
@@ -69,6 +96,7 @@ def read_dust_sensor(pin, duration=3):
     return min(max(ratio, 0), 30.0)
 
 def calculate_aqi(pm25):
+    """Calculate Air Quality Index based on PM2.5 concentration (EPA standard)"""
     if pm25 <= 12.0: 
         return int((50/12.0) * pm25)
     elif pm25 <= 35.4: 
@@ -83,129 +111,193 @@ def calculate_aqi(pm25):
         return min(int(300 + ((500-300)/(500.4-250.4)) * (pm25-250.4)), 500)
 
 def continuous_sensor_reading():
+    """Background thread for continuous sensor data collection"""
     global SENSOR_DATA
     setup_sensors()
     
-    # Moving average buffers
+    # Moving average buffers for data smoothing
     pm25_buffer = []
     pm10_buffer = []
     temp_buffer = []
     humidity_buffer = []
     buffer_size = 5
     
+    print("🔄 Starting continuous sensor reading...")
+    
     while True:
         try:
             if HAS_SENSORS and dht22:
-                # Read DHT22 with retry
+                # Read DHT22 with retry mechanism
                 temp = humidity = None
-                for _ in range(3):
+                for attempt in range(3):
                     try:
                         temp = dht22.temperature
                         humidity = dht22.humidity
-                        if temp and humidity:
+                        if temp is not None and humidity is not None:
                             break
-                    except:
+                        time.sleep(0.5)
+                    except Exception as e:
+                        if attempt == 2:
+                            print(f"⚠️ DHT22 read failed: {e}")
                         time.sleep(0.5)
                 
                 # Read dust sensors
                 pm25_ratio = read_dust_sensor(18, 3)
                 pm10_ratio = read_dust_sensor(19, 3)
-                pm25 = pm25_ratio * 0.1 * 10
-                pm10 = pm10_ratio * 0.1 * 12
+                pm25 = pm25_ratio * 0.1 * 10  # Convert to μg/m³
+                pm10 = pm10_ratio * 0.1 * 12  # Convert to μg/m³
+                
             else:
-                # Simulation with stability
-                base_pm25 = 20 + 10 * math.sin(time.time() / 3600)
-                pm25 = max(5, base_pm25 + random.uniform(-2, 2))
-                pm10 = pm25 * 1.5 + random.uniform(-3, 3)
-                temp = 28 + 3 * math.sin(time.time() / 7200) + random.uniform(-0.5, 0.5)
-                humidity = 65 + 10 * math.sin(time.time() / 5400) + random.uniform(-2, 2)
+                # Enhanced simulation with realistic patterns
+                current_time = time.time()
+                
+                # Daily patterns (higher pollution during day)
+                hour_of_day = (current_time % 86400) / 3600  # Hours 0-24
+                daily_factor = 1 + 0.3 * math.sin((hour_of_day - 6) * math.pi / 12)
+                
+                # Weekly patterns (lower on weekends)
+                day_of_week = ((current_time / 86400) % 7)
+                weekly_factor = 0.8 if day_of_week > 5 else 1.0
+                
+                # Base pollution levels with variation
+                base_pm25 = 20 * daily_factor * weekly_factor
+                pm25 = max(5, base_pm25 + random.uniform(-3, 3))
+                pm10 = pm25 * 1.5 + random.uniform(-5, 5)
+                
+                # Temperature with daily cycle
+                temp = 28 + 5 * math.sin((hour_of_day - 6) * math.pi / 12) + random.uniform(-1, 1)
+                
+                # Humidity inversely related to temperature
+                humidity = max(30, min(90, 70 - (temp - 28) * 2 + random.uniform(-5, 5)))
             
-            # Add to buffers
-            if pm25: pm25_buffer.append(pm25)
-            if pm10: pm10_buffer.append(pm10)
-            if temp: temp_buffer.append(temp)
-            if humidity: humidity_buffer.append(humidity)
+            # Add to buffers for smoothing
+            if pm25 is not None: pm25_buffer.append(max(0, pm25))
+            if pm10 is not None: pm10_buffer.append(max(0, pm10))
+            if temp is not None: temp_buffer.append(temp)
+            if humidity is not None: humidity_buffer.append(max(0, min(100, humidity)))
             
-            # Keep buffer size limited
-            if len(pm25_buffer) > buffer_size: pm25_buffer.pop(0)
-            if len(pm10_buffer) > buffer_size: pm10_buffer.pop(0)
-            if len(temp_buffer) > buffer_size: temp_buffer.pop(0)
-            if len(humidity_buffer) > buffer_size: humidity_buffer.pop(0)
+            # Maintain buffer size
+            for buffer in [pm25_buffer, pm10_buffer, temp_buffer, humidity_buffer]:
+                if len(buffer) > buffer_size:
+                    buffer.pop(0)
             
-            # Calculate averages
+            # Calculate smoothed averages
             with SENSOR_LOCK:
-                SENSOR_DATA['pm25'] = round(sum(pm25_buffer) / len(pm25_buffer), 1) if pm25_buffer else 0
-                SENSOR_DATA['pm10'] = round(sum(pm10_buffer) / len(pm10_buffer), 1) if pm10_buffer else 0
-                SENSOR_DATA['temp'] = round(sum(temp_buffer) / len(temp_buffer), 1) if temp_buffer else 0
-                SENSOR_DATA['humidity'] = round(sum(humidity_buffer) / len(humidity_buffer), 0) if humidity_buffer else 0
+                if pm25_buffer:
+                    SENSOR_DATA['pm25'] = round(sum(pm25_buffer) / len(pm25_buffer), 1)
+                if pm10_buffer:
+                    SENSOR_DATA['pm10'] = round(sum(pm10_buffer) / len(pm10_buffer), 1)
+                if temp_buffer:
+                    SENSOR_DATA['temp'] = round(sum(temp_buffer) / len(temp_buffer), 1)
+                if humidity_buffer:
+                    SENSOR_DATA['humidity'] = round(sum(humidity_buffer) / len(humidity_buffer), 0)
+                
+                # Calculate AQI
                 SENSOR_DATA['aqi'] = calculate_aqi(SENSOR_DATA['pm25'])
             
-            time.sleep(5)  # Update every 5 seconds
+            # Update every 5 seconds
+            time.sleep(5)
             
         except Exception as e:
-            print(f"Sensor reading error: {e}")
+            print(f"❌ Sensor reading error: {e}")
             time.sleep(5)
 
 @app.route('/')
 def index():
+    """Serve the main dashboard page"""
     return render_template('dashboard.html')
 
 @app.route('/tiles/<int:z>/<int:x>/<int:y>.png')
 def serve_tile(z, x, y):
+    """Serve offline map tiles"""
     tile_path = f'static/tiles/{z}/{x}/{y}.png'
+    
     if os.path.exists(tile_path) and is_tile_in_bounds(x, y, z):
         return send_file(tile_path, mimetype='image/png')
-    # Return a blank tile if not available
+    
+    # Return 404 for missing tiles
     return '', 404
 
 def is_tile_in_bounds(x, y, z):
+    """Check if tile coordinates are within NITK campus bounds"""
     n = 2.0 ** z
     lon_min = x / n * 360.0 - 180.0
     lon_max = (x + 1) / n * 360.0 - 180.0
     lat_max = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y / n))))
     lat_min = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (y + 1) / n))))
+    
     return not (lon_max < BOUNDS['west'] or lon_min > BOUNDS['east'] or 
                 lat_max < BOUNDS['south'] or lat_min > BOUNDS['north'])
 
 @app.route('/api/realtime')
 def realtime_data():
+    """Get current real-time sensor data"""
     with SENSOR_LOCK:
-        return jsonify({
-            'pm25': SENSOR_DATA['pm25'],
-            'pm10': SENSOR_DATA['pm10'],
-            'temperature': SENSOR_DATA['temp'],
-            'humidity': SENSOR_DATA['humidity'],
-            'aqi': SENSOR_DATA['aqi'],
-            'timestamp': datetime.now().isoformat()
-        })
+        data = SENSOR_DATA.copy()
+    
+    return jsonify({
+        'pm25': data['pm25'],
+        'pm10': data['pm10'],
+        'temperature': data['temp'],
+        'humidity': data['humidity'],
+        'aqi': data['aqi'],
+        'timestamp': datetime.now().isoformat(),
+        'status': 'active'
+    })
 
 @app.route('/api/collect', methods=['POST'])
 def collect_data():
+    """Collect and store air quality data at specified location with time-series data"""
     try:
+        # Validate request data
+        if not request.is_json:
+            return jsonify({'error': 'Request must be JSON'}), 400
+        
         req = request.json
+        required_fields = ['locationName', 'latitude', 'longitude']
         
-        # Validate required fields
-        if not all(key in req for key in ['locationName', 'latitude', 'longitude']):
-            return jsonify({'error': 'Missing required fields'}), 400
+        if not all(field in req for field in required_fields):
+            return jsonify({'error': f'Missing required fields: {required_fields}'}), 400
         
-        # Validate coordinates
+        # Check if this is a data point submission or final collection
+        if 'collectionData' in req:
+            return save_complete_collection(req)
+        else:
+            return save_simple_collection(req)
+            
+    except Exception as e:
+        print(f"❌ Collection error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+def save_simple_collection(req):
+    """Save a simple collection (current approach)"""
+    try:
+        # Validate and parse coordinates
         lat = float(req['latitude'])
         lng = float(req['longitude'])
+        
+        # Validate coordinates are within NITK campus bounds
         if not (BOUNDS['south'] <= lat <= BOUNDS['north'] and 
                 BOUNDS['west'] <= lng <= BOUNDS['east']):
-            return jsonify({'error': 'Location outside campus bounds'}), 400
+            return jsonify({
+                'error': 'Coordinates outside NITK campus bounds',
+                'bounds': BOUNDS
+            }), 400
+        
+        location_name = req['locationName'].strip()
         
         # Get current sensor data
         with SENSOR_LOCK:
             current_data = SENSOR_DATA.copy()
         
-        # Save to database
+        # Store in database
         conn = sqlite3.connect('data/air_quality.db')
         cursor = conn.cursor()
+        
         cursor.execute('''INSERT INTO readings 
                          (location_name, latitude, longitude, aqi, pm25, pm10, temp, humidity, timestamp)
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                      (req['locationName'], lat, lng, current_data['aqi'],
+                      (location_name, lat, lng, current_data['aqi'],
                        current_data['pm25'], current_data['pm10'], 
                        current_data['temp'], current_data['humidity'], time.time()))
         
@@ -213,7 +305,8 @@ def collect_data():
         conn.commit()
         conn.close()
         
-        # Return the saved data with ID
+        print(f"✅ Simple collection saved: ID={reading_id}, Location='{location_name}'")
+        
         return jsonify({
             'id': reading_id,
             'aqi': current_data['aqi'],
@@ -222,22 +315,95 @@ def collect_data():
             'temperature': current_data['temp'],
             'humidity': current_data['humidity'],
             'timestamp': datetime.now().isoformat(),
-            'location': req['locationName'],
+            'location': location_name,
             'latitude': lat,
-            'longitude': lng
+            'longitude': lng,
+            'status': 'success'
         })
         
     except Exception as e:
-        print(f"Collection error: {e}")
+        print(f"❌ Simple collection error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+def save_complete_collection(req):
+    """Save a complete collection with time-series data"""
+    try:
+        # Validate and parse coordinates
+        lat = float(req['latitude'])
+        lng = float(req['longitude'])
+        location_name = req['locationName'].strip()
+        collection_data = req['collectionData']
+        
+        if not collection_data or len(collection_data) == 0:
+            return save_simple_collection(req)
+        
+        # Calculate averages from collection data
+        avg_pm25 = sum(d['pm25'] for d in collection_data) / len(collection_data)
+        avg_pm10 = sum(d['pm10'] for d in collection_data) / len(collection_data)
+        avg_temp = sum(d['temperature'] for d in collection_data) / len(collection_data)
+        avg_humidity = sum(d['humidity'] for d in collection_data) / len(collection_data)
+        avg_aqi = calculate_aqi(avg_pm25)
+        
+        conn = sqlite3.connect('data/air_quality.db')
+        cursor = conn.cursor()
+        
+        # Insert main reading record
+        cursor.execute('''INSERT INTO readings 
+                         (location_name, latitude, longitude, aqi, pm25, pm10, temp, humidity, timestamp)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                      (location_name, lat, lng, avg_aqi, avg_pm25, avg_pm10, 
+                       avg_temp, avg_humidity, time.time()))
+        
+        reading_id = cursor.lastrowid
+        
+        # Insert individual collection data points
+        for i, data_point in enumerate(collection_data):
+            cursor.execute('''INSERT INTO collection_data
+                             (reading_id, pm25, pm10, temperature, humidity, timestamp, sequence_number)
+                             VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                          (reading_id, data_point['pm25'], data_point['pm10'],
+                           data_point['temperature'], data_point['humidity'],
+                           data_point.get('timestamp', time.time()), i))
+        
+        conn.commit()
+        conn.close()
+        
+        print(f"✅ Complete collection saved: ID={reading_id}, Points={len(collection_data)}")
+        
+        return jsonify({
+            'id': reading_id,
+            'aqi': avg_aqi,
+            'pm25': avg_pm25,
+            'pm10': avg_pm10,
+            'temperature': avg_temp,
+            'humidity': avg_humidity,
+            'timestamp': datetime.now().isoformat(),
+            'location': location_name,
+            'latitude': lat,
+            'longitude': lng,
+            'collection_points': len(collection_data),
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        print(f"❌ Complete collection error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/readings')
 def get_readings():
+    """Get all stored air quality readings"""
     try:
         conn = sqlite3.connect('data/air_quality.db')
         cursor = conn.cursor()
-        cursor.execute('''SELECT id, location_name, latitude, longitude, aqi, pm25, pm10, temp, humidity, timestamp, created_at
-                         FROM readings ORDER BY created_at DESC''')
+        
+        # Get all readings with collection data info
+        cursor.execute('''SELECT r.id, r.location_name, r.latitude, r.longitude, r.aqi, r.pm25, r.pm10, 
+                                 r.temp, r.humidity, r.timestamp, r.created_at,
+                                 COUNT(c.id) as collection_points
+                         FROM readings r
+                         LEFT JOIN collection_data c ON r.id = c.reading_id
+                         GROUP BY r.id
+                         ORDER BY r.created_at DESC''')
         
         readings = []
         for row in cursor.fetchall():
@@ -252,60 +418,154 @@ def get_readings():
                 'temp': row[7],
                 'humidity': row[8],
                 'timestamp': row[9],
-                'created_at': row[10]
+                'created_at': row[10],
+                'has_collection_data': row[11] > 0,
+                'collection_points': row[11]
+            })
+        
+        conn.close()
+        
+        print(f"📊 Retrieved {len(readings)} readings from database")
+        
+        return jsonify({
+            'readings': readings,
+            'count': len(readings),
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        print(f"❌ Error retrieving readings: {e}")
+        return jsonify({'error': 'Failed to retrieve readings', 'readings': []}), 500
+
+@app.route('/api/readings/<int:reading_id>/collection-data')
+def get_collection_data(reading_id):
+    """Get collection time-series data for a specific reading"""
+    try:
+        conn = sqlite3.connect('data/air_quality.db')
+        cursor = conn.cursor()
+        
+        # Get collection data points
+        cursor.execute('''SELECT pm25, pm10, temperature, humidity, timestamp, sequence_number
+                         FROM collection_data 
+                         WHERE reading_id = ? 
+                         ORDER BY sequence_number''', (reading_id,))
+        
+        collection_points = []
+        for row in cursor.fetchall():
+            collection_points.append({
+                'pm25': row[0],
+                'pm10': row[1],
+                'temperature': row[2],
+                'humidity': row[3],
+                'timestamp': row[4],
+                'sequence': row[5]
             })
         
         conn.close()
         
         return jsonify({
-            'readings': readings,
-            'count': len(readings)
+            'reading_id': reading_id,
+            'collection_data': collection_points,
+            'count': len(collection_points),
+            'status': 'success'
         })
         
     except Exception as e:
-        print(f"Readings fetch error: {e}")
-        return jsonify({'error': str(e), 'readings': []}), 500
+        print(f"❌ Error retrieving collection data: {e}")
+        return jsonify({'error': 'Failed to retrieve collection data', 'collection_data': []}), 500
 
 @app.route('/api/status')
 def system_status():
+    """Get system status and health information"""
     try:
+        # Check database
         conn = sqlite3.connect('data/air_quality.db')
-        count = conn.execute('SELECT COUNT(*) FROM readings').fetchone()[0]
+        reading_count = conn.execute('SELECT COUNT(*) FROM readings').fetchone()[0]
+        collection_points = conn.execute('SELECT COUNT(*) FROM collection_data').fetchone()[0]
+        latest_reading = conn.execute('SELECT created_at FROM readings ORDER BY created_at DESC LIMIT 1').fetchone()
         conn.close()
+        
+        # Check sensor status
+        with SENSOR_LOCK:
+            sensor_status = 'active' if any(SENSOR_DATA.values()) else 'initializing'
+            latest_values = SENSOR_DATA.copy()
         
         return jsonify({
             'sensors': 'hardware' if HAS_SENSORS else 'simulation',
             'database': 'connected',
-            'reading_count': count,
-            'sensor_status': 'active' if any(SENSOR_DATA.values()) else 'initializing'
+            'reading_count': reading_count,
+            'collection_points': collection_points,
+            'latest_reading': latest_reading[0] if latest_reading else None,
+            'sensor_status': sensor_status,
+            'current_values': latest_values,
+            'bounds': BOUNDS,
+            'uptime': time.time(),
+            'status': 'healthy'
         })
+        
     except Exception as e:
+        print(f"❌ Status check error: {e}")
         return jsonify({
             'sensors': 'hardware' if HAS_SENSORS else 'simulation',
             'database': 'error',
             'reading_count': 0,
             'sensor_status': 'error',
-            'error': str(e)
-        })
+            'error': str(e),
+            'status': 'degraded'
+        }), 500
 
 @app.route('/api/map-status')
 def map_status():
+    """Get offline map tile availability status"""
     try:
-        tile_count = sum(1 for root, dirs, files in os.walk('static/tiles') 
-                         for f in files if f.endswith('.png'))
+        # Count available tiles
+        tile_count = 0
+        tiles_path = 'static/tiles'
+        
+        if os.path.exists(tiles_path):
+            for root, dirs, files in os.walk(tiles_path):
+                tile_count += sum(1 for f in files if f.endswith('.png'))
+        
+        # Check metadata
+        metadata_path = 'static/tiles/metadata.json'
+        metadata = {}
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+        
         return jsonify({
-            'ready': True,
+            'ready': tile_count > 0,
             'available_tiles': tile_count,
-            'progress': {'downloaded': tile_count, 'total': tile_count, 'percentage': 100}
+            'metadata': metadata,
+            'progress': {
+                'downloaded': tile_count,
+                'total': metadata.get('total', tile_count),
+                'percentage': 100 if tile_count > 0 else 0
+            },
+            'bounds': BOUNDS
         })
-    except:
+        
+    except Exception as e:
+        print(f"❌ Map status error: {e}")
         return jsonify({
             'ready': False,
             'available_tiles': 0,
-            'progress': {'downloaded': 0, 'total': 0, 'percentage': 0}
+            'progress': {'downloaded': 0, 'total': 0, 'percentage': 0},
+            'error': str(e)
         })
 
+# Error handlers
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Endpoint not found'}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({'error': 'Internal server error'}), 500
+
 if __name__ == '__main__':
+    print("🌱 NITK Air Quality Monitor Starting...")
+    
     # Initialize database
     init_db()
     
@@ -313,12 +573,29 @@ if __name__ == '__main__':
     sensor_thread = threading.Thread(target=continuous_sensor_reading, daemon=True)
     sensor_thread.start()
     
-    print("🌱 NITK Air Quality Monitor Started")
-    print(f"📊 Mode: {'Hardware' if HAS_SENSORS else 'Simulation'}")
-    print("🌐 Access: http://0.0.0.0:5000")
+    print("📊 Mode: Hardware" if HAS_SENSORS else "📊 Mode: Simulation")
+    print("🌐 Server: http://0.0.0.0:5000")
+    print("📱 Dashboard: http://localhost:5000")
+    print("🔗 API Status: http://localhost:5000/api/status")
+    print("📈 Readings API: http://localhost:5000/api/readings")
+    print("\n✅ System ready! Press Ctrl+C to stop.\n")
     
     try:
-        app.run(debug=False, host='0.0.0.0', port=5000)
+        # Run Flask application
+        app.run(
+            debug=False,  # Set to True for development
+            host='0.0.0.0', 
+            port=5000,
+            threaded=True
+        )
+    except KeyboardInterrupt:
+        print("\n🛑 Shutting down NITK Air Quality Monitor...")
     finally:
+        # Cleanup GPIO if using hardware
         if HAS_SENSORS:
-            GPIO.cleanup()
+            try:
+                GPIO.cleanup()
+                print("✅ GPIO cleanup completed")
+            except:
+                pass
+        print("👋 Goodbye!")

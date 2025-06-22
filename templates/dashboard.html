@@ -48,34 +48,6 @@
             flex-direction: column;
         }
         
-        /* Floating action button */
-        .fab {
-            position: fixed;
-            bottom: 30px;
-            right: 30px;
-            width: 60px;
-            height: 60px;
-            background: linear-gradient(135deg, #007AFF 0%, #0056CC 100%);
-            border: none;
-            border-radius: 50%;
-            color: white;
-            font-size: 24px;
-            cursor: pointer;
-            box-shadow: 0 8px 25px rgba(0, 122, 255, 0.3);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            z-index: 999;
-        }
-        
-        .fab:hover {
-            transform: translateY(-3px) scale(1.05);
-            box-shadow: 0 12px 35px rgba(0, 122, 255, 0.4);
-        }
-        
-        .fab.hidden {
-            transform: translateY(100px) scale(0.8);
-            opacity: 0;
-        }
-        
         .collection-card.visible {
             transform: translateX(0);
         }
@@ -355,84 +327,6 @@
             animation: pulse 2s infinite;
         }
         
-        /* Map markers */
-        .aqi-marker {
-            background:#fff; 
-            border:3px solid #007AFF; 
-            border-radius:50%; 
-            width:40px; 
-            height:40px; 
-            display:flex; 
-            align-items:center; 
-            justify-content:center; 
-            font-weight:bold; 
-            font-size:14px;
-            box-shadow:0 2px 8px rgba(0,0,0,0.2);
-            cursor:pointer;
-        }
-        .aqi-good {background:#4caf50; color:white; border-color:#4caf50;}
-        .aqi-moderate {background:#ffc107; color:white; border-color:#ffc107;}
-        .aqi-unhealthy-sensitive {background:#ff9800; color:white; border-color:#ff9800;}
-        .aqi-unhealthy {background:#f44336; color:white; border-color:#f44336;}
-        .aqi-very-unhealthy {background:#9c27b0; color:white; border-color:#9c27b0;}
-        
-        /* Responsive */
-        @media (max-width:768px) {
-            .container {grid-template-columns:1fr; padding:10px;}
-            .collection-card {
-                top: 80px;
-                right: 10px;
-                left: 10px;
-                width: auto;
-                transform: translateY(100vh);
-            }
-            .collection-card.visible {
-                transform: translateY(0);
-            }
-            .collection-card.minimized {
-                bottom: 20px;
-                top: auto;
-                width: 200px;
-                left: auto;
-                right: 10px;
-                transform: translateY(0);
-            }
-            .modal-content {
-                width: 95%;
-                padding: 16px;
-                max-height: 95vh;
-            }
-            #detailsSummary div {
-                grid-template-columns: 1fr 1fr !important;
-            }
-            #technicalParams {
-                grid-template-columns: 1fr !important;
-            }
-        }
-        
-        /* Floating action button */
-        .fab {
-            position: fixed;
-            bottom: 30px;
-            right: 30px;
-            width: 60px;
-            height: 60px;
-            background: linear-gradient(135deg, #007AFF 0%, #0056CC 100%);
-            border: none;
-            border-radius: 50%;
-            color: white;
-            font-size: 24px;
-            cursor: pointer;
-            box-shadow: 0 8px 25px rgba(0, 122, 255, 0.3);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            z-index: 999;
-        }
-        
-        .fab:hover {
-            transform: translateY(-3px) scale(1.05);
-            box-shadow: 0 12px 35px rgba(0, 122, 255, 0.4);
-        }
-        
         /* Detailed Analysis Modal */
         .modal {
             display: none;
@@ -662,8 +556,76 @@
             color: #1976D2;
         }
         
+        /* Map markers */
+        .aqi-marker {
+            background:#fff; 
+            border:3px solid #007AFF; 
+            border-radius:50%; 
+            width:40px; 
+            height:40px; 
+            display:flex; 
+            align-items:center; 
+            justify-content:center; 
+            font-weight:bold; 
+            font-size:14px;
+            box-shadow:0 2px 8px rgba(0,0,0,0.2);
+            cursor:pointer;
+        }
+        .aqi-good {background:#4caf50; color:white; border-color:#4caf50;}
+        .aqi-moderate {background:#ffc107; color:white; border-color:#ffc107;}
+        .aqi-unhealthy-sensitive {background:#ff9800; color:white; border-color:#ff9800;}
+        .aqi-unhealthy {background:#f44336; color:white; border-color:#f44336;}
+        .aqi-very-unhealthy {background:#9c27b0; color:white; border-color:#9c27b0;}
+        
+        /* Floating action button */
+        .fab {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #007AFF 0%, #0056CC 100%);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            box-shadow: 0 8px 25px rgba(0, 122, 255, 0.3);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 999;
+        }
+        
+        .fab:hover {
+            transform: translateY(-3px) scale(1.05);
+            box-shadow: 0 12px 35px rgba(0, 122, 255, 0.4);
+        }
+        
+        .fab.hidden {
+            transform: translateY(100px) scale(0.8);
+            opacity: 0;
+        }
+        
         /* Responsive Design */
         @media (max-width: 768px) {
+            .container {grid-template-columns:1fr; padding:10px;}
+            .collection-card {
+                top: 80px;
+                right: 10px;
+                left: 10px;
+                width: auto;
+                transform: translateY(100vh);
+            }
+            .collection-card.visible {
+                transform: translateY(0);
+            }
+            .collection-card.minimized {
+                bottom: 20px;
+                top: auto;
+                width: 200px;
+                left: auto;
+                right: 10px;
+                transform: translateY(0);
+            }
             .modal .modal-content {
                 width: 98%;
                 max-height: 95vh;
@@ -736,66 +698,9 @@
             </div>
         </div>
     </div>
-
+    
     <!-- Floating Action Button -->
     <button class="fab" id="fabBtn" onclick="openCollectionCard()">📊</button>
-    
-    <!-- Detailed Data Modal -->
-    <div class="modal" id="detailsModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3 id="detailsTitle">📊 Detailed Analysis</h3>
-                <button class="control-btn" onclick="closeDetailsModal()">×</button>
-            </div>
-            
-            <div class="modal-body">
-                <div class="analysis-content">
-                    <!-- Summary Section -->
-                    <div class="analysis-section">
-                        <h4>📋 Summary Overview</h4>
-                        <div id="detailsSummary">
-                            <!-- Will be populated dynamically -->
-                        </div>
-                    </div>
-                    
-                    <!-- Charts Section -->
-                    <div class="analysis-section">
-                        <h4>📊 Data Visualization</h4>
-                        <div class="charts-grid">
-                            <div class="chart-card">
-                                <h5>Air Quality Timeline</h5>
-                                <div class="chart-container-modal">
-                                    <canvas id="detailsAirChart"></canvas>
-                                </div>
-                            </div>
-                            <div class="chart-card">
-                                <h5>Environmental Conditions</h5>
-                                <div class="chart-container-modal">
-                                    <canvas id="detailsEnvChart"></canvas>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Technical Parameters Section -->
-                    <div class="analysis-section">
-                        <h4>🔧 Technical Parameters</h4>
-                        <div id="technicalParams" class="params-grid">
-                            <!-- Will be populated dynamically -->
-                        </div>
-                    </div>
-                    
-                    <!-- Data Quality Assessment Section -->
-                    <div class="analysis-section">
-                        <h4>🔬 Data Quality Assessment</h4>
-                        <div id="dataQuality">
-                            <!-- Will be populated dynamically -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
     
     <!-- Data Collection Card -->
     <div class="collection-card" id="collectionCard">
@@ -870,6 +775,63 @@
             
             <div class="quick-actions" id="quickActions">
                 <button class="quick-btn" onclick="openDetailsModal()">View Details</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detailed Data Modal -->
+    <div class="modal" id="detailsModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="detailsTitle">📊 Detailed Analysis</h3>
+                <button class="control-btn" onclick="closeDetailsModal()">×</button>
+            </div>
+            
+            <div class="modal-body">
+                <div class="analysis-content">
+                    <!-- Summary Section -->
+                    <div class="analysis-section">
+                        <h4>📋 Summary Overview</h4>
+                        <div id="detailsSummary">
+                            <!-- Will be populated dynamically -->
+                        </div>
+                    </div>
+                    
+                    <!-- Charts Section -->
+                    <div class="analysis-section">
+                        <h4>📊 Data Visualization</h4>
+                        <div class="charts-grid">
+                            <div class="chart-card">
+                                <h5>Air Quality Timeline</h5>
+                                <div class="chart-container-modal">
+                                    <canvas id="detailsAirChart"></canvas>
+                                </div>
+                            </div>
+                            <div class="chart-card">
+                                <h5>Environmental Conditions</h5>
+                                <div class="chart-container-modal">
+                                    <canvas id="detailsEnvChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Technical Parameters Section -->
+                    <div class="analysis-section">
+                        <h4>🔧 Technical Parameters</h4>
+                        <div id="technicalParams" class="params-grid">
+                            <!-- Will be populated dynamically -->
+                        </div>
+                    </div>
+                    
+                    <!-- Data Quality Assessment Section -->
+                    <div class="analysis-section">
+                        <h4>🔬 Data Quality Assessment</h4>
+                        <div id="dataQuality">
+                            <!-- Will be populated dynamically -->
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1223,7 +1185,7 @@
                     humidity: collectionData.reduce((sum, d) => sum + d.humidity, 0) / collectionData.length
                 };
                 
-                // Save to database
+                // Save to database with collection data
                 const res = await fetch('/api/collect', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -1231,7 +1193,8 @@
                         locationName: location,
                         latitude: lat,
                         longitude: lng,
-                        duration: COLLECTION_DURATION
+                        duration: COLLECTION_DURATION,
+                        collectionData: collectionData  // Send the time-series data
                     })
                 });
                 
@@ -1375,6 +1338,94 @@
             return marker;
         }
         
+        function createDetailedPopup(location, data, readingId) {
+            const collectionInfo = allReadings[readingId];
+            const hasCollectionData = collectionInfo && collectionInfo.collectionData && collectionInfo.collectionData.length > 0;
+            
+            // Create chart HTML only if we have collection data
+            let chartHtml = '';
+            if (hasCollectionData) {
+                chartHtml = `
+                    <div style="margin: 16px 0;">
+                        <canvas id="popupChart${readingId}" width="300" height="150"></canvas>
+                    </div>`;
+            }
+            
+            // Different info based on whether we have collection data
+            let collectionInfoHtml = '';
+            if (hasCollectionData) {
+                collectionInfoHtml = `
+                    <div style="background: #e3f2fd; padding: 12px; border-radius: 8px; margin: 12px 0; font-size: 14px;">
+                        📊 <strong>${collectionInfo.collectionData.length}</strong> data points collected<br>
+                        ⏱️ Collection duration: ${COLLECTION_DURATION / 60} minutes
+                    </div>`;
+            } else {
+                collectionInfoHtml = `
+                    <div style="background: #fff3cd; padding: 12px; border-radius: 8px; margin: 12px 0; font-size: 14px; border-left: 4px solid #ffc107;">
+                        📋 <strong>Historical Reading</strong><br>
+                        ⏱️ Snapshot data (no time-series available)
+                    </div>`;
+            }
+            
+            // Show detailed analysis button only if we have collection data
+            let analysisButton = '';
+            if (hasCollectionData) {
+                analysisButton = `
+                    <div style="margin-top: 16px;">
+                        <button onclick="openDetailsModal(${readingId})" 
+                                style="width: 100%; padding: 12px; background: #007AFF; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">
+                            📊 View Detailed Analysis
+                        </button>
+                    </div>`;
+            } else {
+                analysisButton = `
+                    <div style="margin-top: 16px;">
+                        <div style="padding: 12px; background: #f8f9fa; color: #666; border: 1px solid #dee2e6; border-radius: 8px; text-align: center; font-size: 14px;">
+                            📊 Detailed analysis not available for historical data
+                        </div>
+                    </div>`;
+            }
+            
+            return `
+                <div style="text-align: center; min-width: 320px;">
+                    <h4 style="margin: 0 0 12px 0; color: #333;">${location}</h4>
+                    <div style="font-size: 36px; font-weight: bold; color: ${getAQIColor(data.aqi)}; margin: 12px 0;">
+                        ${data.aqi}
+                    </div>
+                    <div style="color: #666; margin-bottom: 16px;">${getAQIStatus(data.aqi)}</div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0;">
+                        <div style="background: #f8f9fa; padding: 12px; border-radius: 8px;">
+                            <strong style="display: block; font-size: 18px; color: #333;">${data.pm25.toFixed(1)}</strong>
+                            <span style="font-size: 12px; color: #666;">PM2.5 μg/m³</span>
+                        </div>
+                        <div style="background: #f8f9fa; padding: 12px; border-radius: 8px;">
+                            <strong style="display: block; font-size: 18px; color: #333;">${data.pm10.toFixed(1)}</strong>
+                            <span style="font-size: 12px; color: #666;">PM10 μg/m³</span>
+                        </div>
+                        <div style="background: #f8f9fa; padding: 12px; border-radius: 8px;">
+                            <strong style="display: block; font-size: 18px; color: #333;">${data.temperature?.toFixed(1) || '--'}°C</strong>
+                            <span style="font-size: 12px; color: #666;">Temperature</span>
+                        </div>
+                        <div style="background: #f8f9fa; padding: 12px; border-radius: 8px;">
+                            <strong style="display: block; font-size: 18px; color: #333;">${data.humidity?.toFixed(0) || '--'}%</strong>
+                            <span style="font-size: 12px; color: #666;">Humidity</span>
+                        </div>
+                    </div>
+                    
+                    ${chartHtml}
+                    ${collectionInfoHtml}
+                    
+                    <div style="font-size: 12px; color: #999; padding-top: 12px; border-top: 1px solid #eee;">
+                        📅 ${new Date(data.timestamp).toLocaleString()}<br>
+                        📍 ${data.latitude?.toFixed(6)}, ${data.longitude?.toFixed(6)}
+                    </div>
+                    
+                    ${analysisButton}
+                </div>
+            `;
+        }
+        
         // Detailed Analysis Modal Functions
         function openDetailsModal(readingId = null) {
             const targetId = readingId || currentCompletedReading;
@@ -1384,6 +1435,13 @@
             }
             
             const reading = allReadings[targetId];
+            const hasCollectionData = reading.collectionData && reading.collectionData.length > 0;
+            
+            if (!hasCollectionData) {
+                alert('Detailed analysis requires time-series data. This feature is only available for newly collected data.');
+                return;
+            }
+            
             const modal = document.getElementById('detailsModal');
             
             // Show modal with smooth transition
@@ -1862,68 +1920,19 @@
             return denominator === 0 ? 0 : numerator / denominator;
         }
         
-        function createDetailedPopup(location, data, readingId) {
-            const collectionInfo = allReadings[readingId];
-            
-            // Create chart HTML if we have collection data
-            let chartHtml = '';
-            if (collectionInfo && collectionInfo.collectionData && collectionInfo.collectionData.length > 0) {
-                chartHtml = `
-                    <div style="margin: 16px 0;">
-                        <canvas id="popupChart${readingId}" width="300" height="150"></canvas>
-                    </div>`;
+        // Event handlers
+        window.onclick = e => {
+            if (e.target.id === 'detailsModal') {
+                closeDetailsModal();
             }
-            
-            return `
-                <div style="text-align: center; min-width: 320px;">
-                    <h4 style="margin: 0 0 12px 0; color: #333;">${location}</h4>
-                    <div style="font-size: 36px; font-weight: bold; color: ${getAQIColor(data.aqi)}; margin: 12px 0;">
-                        ${data.aqi}
-                    </div>
-                    <div style="color: #666; margin-bottom: 16px;">${getAQIStatus(data.aqi)}</div>
-                    
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0;">
-                        <div style="background: #f8f9fa; padding: 12px; border-radius: 8px;">
-                            <strong style="display: block; font-size: 18px; color: #333;">${data.pm25.toFixed(1)}</strong>
-                            <span style="font-size: 12px; color: #666;">PM2.5 μg/m³</span>
-                        </div>
-                        <div style="background: #f8f9fa; padding: 12px; border-radius: 8px;">
-                            <strong style="display: block; font-size: 18px; color: #333;">${data.pm10.toFixed(1)}</strong>
-                            <span style="font-size: 12px; color: #666;">PM10 μg/m³</span>
-                        </div>
-                        <div style="background: #f8f9fa; padding: 12px; border-radius: 8px;">
-                            <strong style="display: block; font-size: 18px; color: #333;">${data.temperature?.toFixed(1) || '--'}°C</strong>
-                            <span style="font-size: 12px; color: #666;">Temperature</span>
-                        </div>
-                        <div style="background: #f8f9fa; padding: 12px; border-radius: 8px;">
-                            <strong style="display: block; font-size: 18px; color: #333;">${data.humidity?.toFixed(0) || '--'}%</strong>
-                            <span style="font-size: 12px; color: #666;">Humidity</span>
-                        </div>
-                    </div>
-                    
-                    ${chartHtml}
-                    
-                    ${collectionInfo && collectionInfo.collectionData ? 
-                        `<div style="background: #e3f2fd; padding: 12px; border-radius: 8px; margin: 12px 0; font-size: 14px;">
-                            📊 <strong>${collectionInfo.collectionData.length}</strong> data points collected<br>
-                            ⏱️ Collection duration: ${COLLECTION_DURATION / 60} minutes
-                        </div>` : ''}
-                    
-                    <div style="font-size: 12px; color: #999; padding-top: 12px; border-top: 1px solid #eee;">
-                        📅 ${new Date(data.timestamp).toLocaleString()}<br>
-                        📍 ${data.latitude?.toFixed(6)}, ${data.longitude?.toFixed(6)}
-                    </div>
-                    
-                    ${collectionInfo && collectionInfo.collectionData && collectionInfo.collectionData.length > 0 ? 
-                        `<div style="margin-top: 16px;">
-                            <button onclick="openDetailsModal(${readingId})" 
-                                    style="width: 100%; padding: 12px; background: #007AFF; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">
-                                📊 View Detailed Analysis
-                            </button>
-                        </div>` : ''}
-                </div>
-            `;
         }
+        
+        // Prevent modal content clicks from closing modal
+        document.addEventListener('click', function(e) {
+            if (e.target.closest('.modal-content')) {
+                e.stopPropagation();
+            }
+        });
         
         // Initialize
         initMap();
@@ -1939,7 +1948,7 @@
                 if (data.readings && data.readings.length > 0) {
                     console.log(`Loading ${data.readings.length} existing readings...`);
                     
-                    data.readings.forEach(reading => {
+                    for (const reading of data.readings) {
                         if (reading.location_name && reading.latitude && reading.longitude) {
                             const readingData = {
                                 id: reading.id,
@@ -1954,11 +1963,25 @@
                                 location: reading.location_name
                             };
                             
-                            // Store in memory (without collection data for existing readings)
+                            // Load collection data if available
+                            let collectionData = [];
+                            if (reading.has_collection_data && reading.collection_points > 0) {
+                                try {
+                                    const collectionRes = await fetch(`/api/readings/${reading.id}/collection-data`);
+                                    const collectionInfo = await collectionRes.json();
+                                    if (collectionInfo.collection_data) {
+                                        collectionData = collectionInfo.collection_data;
+                                    }
+                                } catch (e) {
+                                    console.warn(`Failed to load collection data for reading ${reading.id}:`, e);
+                                }
+                            }
+                            
+                            // Store in memory
                             allReadings[reading.id] = {
                                 location: reading.location_name,
                                 data: readingData,
-                                collectionData: [], // No historical collection data
+                                collectionData: collectionData,
                                 avgData: {
                                     pm25: reading.pm25,
                                     pm10: reading.pm10,
@@ -1970,7 +1993,7 @@
                             // Add marker to map
                             addDataMarker(reading.location_name, reading.latitude, reading.longitude, readingData);
                         }
-                    });
+                    }
                     
                     console.log('Existing readings loaded successfully');
                 }

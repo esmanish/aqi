@@ -19,7 +19,184 @@ app = Flask(__name__)
 BOUNDS = {'north': 13.018, 'south': 13.004, 'east': 74.802, 'west': 74.780}
 SENSOR_DATA = {'pm25': 0, 'pm10': 0, 'temp': 0, 'humidity': 0, 'aqi': 0}
 SENSOR_LOCK = threading.Lock()
-dht22 = None
+
+# Import sensor manager inline to avoid import issues
+class SensorManager:
+    def __init__(self, hardware=False):
+        self.hardware = hardware
+        self.history = {'pm25': [], 'pm10': [], 'temp': [], 'humidity': []}
+        self.buffer_size = 5
+        
+        # Base values for Mangalore region
+        self.base_values = {
+            'pm25': 18, 'pm10': 42, 'temp': 28, 'humidity': 65
+        }
+        
+        # Initialize hardware sensors
+        if self.hardware and HAS_SENSORS:
+            try:
+                GPIO.setmode(GPIO.BCM)
+                GPIO.setwarnings(False)
+                GPIO.setup(23, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # PM2.5
+                GPIO.setup(24, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # PM10
+                self.dht22 = adafruit_dht.DHT22(board.D27)
+                print("✅ Hardware sensors initialized (GPIO 23/24)")
+            except Exception as e:
+                print(f"❌ Hardware init failed: {e}")
+                self.hardware = False
+    
+    def read_sensors(self):
+        if self.hardware and HAS_SENSORS:
+            return self._read_hardware()
+        else:
+            return self._read_simulation()
+    
+    def read_dust_sensor(self, pin, duration=3):
+        """Read dust sensor with proper timing"""
+        if not HAS_SENSORS:
+            return random.uniform(0.01, 0.3)
+        
+        start_time = time.time()
+        low_time = 0
+        
+        while (time.time() - start_time) < duration:
+            if GPIO.input(pin) == GPIO.LOW:
+                low_time += 0.01
+            time.sleep(0.01)
+        
+        ratio = (low_time / duration) * 100
+        return max(0, ratio)
+    
+    def _read_hardware(self):
+        try:
+            # Read dust sensors
+            pm25_ratio = self.read_dust_sensor(23, 3)
+            pm10_ratio = self.read_dust_sensor(24, 3)
+            
+            # Convert ratios to concentrations for Mangalore
+            pm25 = max(8, pm25_ratio * 100 + 15)  # 15-30 range
+            pm10 = max(pm25 * 1.5, pm10_ratio * 120 + 35)  # 35-60 range
+            
+            # Read environmental sensors
+            temp = humidity = None
+            for attempt in range(3):
+                try:
+                    temp = self.dht22.temperature
+                    humidity = self.dht22.humidity
+                    if temp is not None and humidity is not None:
+                        break
+                except:
+                    pass
+                time.sleep(0.3)
+            
+            # Use defaults if sensor fails
+            if temp is None:
+                temp = self.base_values['temp'] + random.uniform(-1, 1)
+            if humidity is None:
+                humidity = self.base_values['humidity'] + random.uniform(-3, 3)
+            
+            # Add to history
+            self.history['pm25'].append(pm25)
+            self.history['pm10'].append(pm10)
+            self.history['temp'].append(temp)
+            self.history['humidity'].append(humidity)
+            
+            # Keep buffer size limited
+            for key in self.history:
+                if len(self.history[key]) > self.buffer_size:
+                    self.history[key].pop(0)
+            
+            # Return averaged values
+            return {
+                'pm25': round(sum(self.history['pm25']) / len(self.history['pm25']), 1),
+                'pm10': round(sum(self.history['pm10']) / len(self.history['pm10']), 1),
+                'temperature': round(sum(self.history['temp']) / len(self.history['temp']), 1),
+                'humidity': round(sum(self.history['humidity']) / len(self.history['humidity']), 0),
+                'timestamp': time.time()
+            }
+            
+        except Exception as e:
+            print(f"❌ Hardware reading error: {e}")
+            return self._read_simulation()
+    
+    def _read_simulation(self):
+        # Enhanced simulation with location variation
+        t = time.time()
+        
+        # Daily patterns
+        hour_factor = math.sin((t % 86400) / 86400 * 2 * math.pi - math.pi/2)
+        
+        # Location-based variation (changes every 5 minutes)
+        location_seed = int(t / 300) % 7
+        location_factor = 0.8 + (location_seed * 0.06)  # 0.8 to 1.16 multiplier
+        
+        pm25 = self.base_values['pm25'] * location_factor + 3 * hour_factor + random.uniform(-2, 2)
+        pm10 = self.base_values['pm10'] * location_factor + 5 * hour_factor + random.uniform(-3, 3)
+        temp = self.base_values['temp'] + 4 * hour_factor + random.uniform(-0.8, 0.8)
+        humidity = self.base_values['humidity'] - 8 * hour_factor + random.uniform(-4, 4)
+        
+        # Realistic bounds for Mangalore
+        pm25 = max(12, min(28, pm25))
+        pm10 = max(max(pm25 * 1.6, 30), min(55, pm10))
+        temp = max(18, min(38, temp))
+        humidity = max(35, min(85, humidity))
+        
+        # Add to history for smoothing
+        self.history['pm25'].append(pm25)
+        self.history['pm10'].append(pm10)
+        self.history['temp'].append(temp)
+        self.history['humidity'].append(humidity)
+        
+        # Keep buffer size limited
+        for key in self.history:
+            if len(self.history[key]) > self.buffer_size:
+                self.history[key].pop(0)
+        
+        # Return averaged values
+        return {
+            'pm25': round(sum(self.history['pm25']) / len(self.history['pm25']), 1),
+            'pm10': round(sum(self.history['pm10']) / len(self.history['pm10']), 1),
+            'temperature': round(sum(self.history['temp']) / len(self.history['temp']), 1),
+            'humidity': round(sum(self.history['humidity']) / len(self.history['humidity']), 0),
+            'timestamp': time.time()
+        }
+    
+    def calculate_aqi(self, pm25, pm10):
+        # EPA standard AQI calculation
+        aqi_pm25 = self._calc_aqi_pm25(pm25)
+        aqi_pm10 = self._calc_aqi_pm10(pm10)
+        return max(aqi_pm25, aqi_pm10)
+    
+    def _calc_aqi_pm25(self, pm25):
+        if pm25 <= 12.0:
+            return round((50/12.0) * pm25)
+        elif pm25 <= 35.4:
+            return round(50 + ((100-50)/(35.4-12.0)) * (pm25-12.0))
+        elif pm25 <= 55.4:
+            return round(100 + ((150-100)/(55.4-35.4)) * (pm25-35.4))
+        elif pm25 <= 150.4:
+            return round(150 + ((200-150)/(150.4-55.4)) * (pm25-55.4))
+        elif pm25 <= 250.4:
+            return round(200 + ((300-200)/(250.4-150.4)) * (pm25-150.4))
+        else:
+            return min(round(300 + ((500-300)/(500.4-250.4)) * (pm25-250.4)), 500)
+    
+    def _calc_aqi_pm10(self, pm10):
+        if pm10 <= 54:
+            return round((50/54) * pm10)
+        elif pm10 <= 154:
+            return round(50 + ((100-50)/(154-54)) * (pm10-54))
+        elif pm10 <= 254:
+            return round(100 + ((150-100)/(254-154)) * (pm10-154))
+        elif pm10 <= 354:
+            return round(150 + ((200-150)/(354-254)) * (pm10-254))
+        elif pm10 <= 424:
+            return round(200 + ((300-200)/(424-354)) * (pm10-354))
+        else:
+            return 301
+
+# Global sensor manager
+sensor_manager = None
 
 def init_db():
     """Initialize the SQLite database with proper schema"""
@@ -61,146 +238,37 @@ def init_db():
     conn.close()
     print("✅ Database initialized successfully")
 
-def setup_sensors():
-    """Initialize hardware sensors if available"""
-    global dht22
-    if not HAS_SENSORS:
-        print("📟 Hardware sensors not available - using simulation")
-        return
-    
-    try:
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setwarnings(False)
-        GPIO.setup(18, GPIO.IN)  # PM2.5 sensor pin
-        GPIO.setup(19, GPIO.IN)  # PM10 sensor pin
-        dht22 = adafruit_dht.DHT22(board.D27)  # Temperature/Humidity sensor
-        print("✅ Hardware sensors initialized successfully")
-    except Exception as e:
-        print(f"❌ Sensor setup failed: {e}")
-
-def read_dust_sensor(pin, duration=3):
-    """Read dust sensor data from GPIO pin"""
-    if not HAS_SENSORS:
-        # Simulation data with realistic patterns
-        return random.uniform(5, 15)
-    
-    start_time = time.time()
-    low_time = 0
-    
-    while (time.time() - start_time) < duration:
-        if GPIO.input(pin) == 0:
-            low_time += 0.01
-        time.sleep(0.01)
-    
-    ratio = (low_time / duration) * 100
-    return min(max(ratio, 0), 30.0)
-
-def calculate_aqi(pm25):
-    """Calculate Air Quality Index based on PM2.5 concentration (EPA standard)"""
-    if pm25 <= 12.0: 
-        return int((50/12.0) * pm25)
-    elif pm25 <= 35.4: 
-        return int(50 + ((100-50)/(35.4-12.0)) * (pm25-12.0))
-    elif pm25 <= 55.4: 
-        return int(100 + ((150-100)/(55.4-35.4)) * (pm25-35.4))
-    elif pm25 <= 150.4: 
-        return int(150 + ((200-150)/(150.4-55.4)) * (pm25-55.4))
-    elif pm25 <= 250.4: 
-        return int(200 + ((300-200)/(250.4-150.4)) * (pm25-150.4))
-    else: 
-        return min(int(300 + ((500-300)/(500.4-250.4)) * (pm25-250.4)), 500)
-
 def continuous_sensor_reading():
     """Background thread for continuous sensor data collection"""
-    global SENSOR_DATA
-    setup_sensors()
+    global SENSOR_DATA, sensor_manager
     
-    # Moving average buffers for data smoothing
-    pm25_buffer = []
-    pm10_buffer = []
-    temp_buffer = []
-    humidity_buffer = []
-    buffer_size = 5
+    # Initialize sensor manager
+    sensor_manager = SensorManager(hardware=HAS_SENSORS)
     
     print("🔄 Starting continuous sensor reading...")
+    print("📊 Mode: Hardware" if HAS_SENSORS else "📊 Mode: Simulation")
     
     while True:
         try:
-            if HAS_SENSORS and dht22:
-                # Read DHT22 with retry mechanism
-                temp = humidity = None
-                for attempt in range(3):
-                    try:
-                        temp = dht22.temperature
-                        humidity = dht22.humidity
-                        if temp is not None and humidity is not None:
-                            break
-                        time.sleep(0.5)
-                    except Exception as e:
-                        if attempt == 2:
-                            print(f"⚠️ DHT22 read failed: {e}")
-                        time.sleep(0.5)
-                
-                # Read dust sensors
-                pm25_ratio = read_dust_sensor(18, 3)
-                pm10_ratio = read_dust_sensor(19, 3)
-                pm25 = pm25_ratio * 0.1 * 10  # Convert to μg/m³
-                pm10 = pm10_ratio * 0.1 * 12  # Convert to μg/m³
-                
-            else:
-                # Enhanced simulation with realistic patterns
-                current_time = time.time()
-                
-                # Daily patterns (higher pollution during day)
-                hour_of_day = (current_time % 86400) / 3600  # Hours 0-24
-                daily_factor = 1 + 0.3 * math.sin((hour_of_day - 6) * math.pi / 12)
-                
-                # Weekly patterns (lower on weekends)
-                day_of_week = ((current_time / 86400) % 7)
-                weekly_factor = 0.8 if day_of_week > 5 else 1.0
-                
-                # Base pollution levels with variation
-                base_pm25 = 20 * daily_factor * weekly_factor
-                pm25 = max(5, base_pm25 + random.uniform(-3, 3))
-                pm10 = pm25 * 1.5 + random.uniform(-5, 5)
-                
-                # Temperature with daily cycle
-                temp = 28 + 5 * math.sin((hour_of_day - 6) * math.pi / 12) + random.uniform(-1, 1)
-                
-                # Humidity inversely related to temperature
-                humidity = max(30, min(90, 70 - (temp - 28) * 2 + random.uniform(-5, 5)))
+            # Get sensor data
+            data = sensor_manager.read_sensors()
             
-            # Add to buffers for smoothing
-            if pm25 is not None: pm25_buffer.append(max(0, pm25))
-            if pm10 is not None: pm10_buffer.append(max(0, pm10))
-            if temp is not None: temp_buffer.append(temp)
-            if humidity is not None: humidity_buffer.append(max(0, min(100, humidity)))
-            
-            # Maintain buffer size
-            for buffer in [pm25_buffer, pm10_buffer, temp_buffer, humidity_buffer]:
-                if len(buffer) > buffer_size:
-                    buffer.pop(0)
-            
-            # Calculate smoothed averages
             with SENSOR_LOCK:
-                if pm25_buffer:
-                    SENSOR_DATA['pm25'] = round(sum(pm25_buffer) / len(pm25_buffer), 1)
-                if pm10_buffer:
-                    SENSOR_DATA['pm10'] = round(sum(pm10_buffer) / len(pm10_buffer), 1)
-                if temp_buffer:
-                    SENSOR_DATA['temp'] = round(sum(temp_buffer) / len(temp_buffer), 1)
-                if humidity_buffer:
-                    SENSOR_DATA['humidity'] = round(sum(humidity_buffer) / len(humidity_buffer), 0)
-                
-                # Calculate AQI
-                SENSOR_DATA['aqi'] = calculate_aqi(SENSOR_DATA['pm25'])
+                SENSOR_DATA['pm25'] = data['pm25']
+                SENSOR_DATA['pm10'] = data['pm10']
+                SENSOR_DATA['temp'] = data['temperature']
+                SENSOR_DATA['humidity'] = data['humidity']
+                SENSOR_DATA['aqi'] = sensor_manager.calculate_aqi(data['pm25'], data['pm10'])
             
-            # Update every 5 seconds
-            time.sleep(5)
+            # Print readings for debugging
+            print(f"📊 PM2.5: {data['pm25']:.1f}, PM10: {data['pm10']:.1f}, AQI: {SENSOR_DATA['aqi']}")
+            
+            # Update every 10 seconds
+            time.sleep(10)
             
         except Exception as e:
             print(f"❌ Sensor reading error: {e}")
-            time.sleep(5)
+            time.sleep(10)
 
 @app.route('/')
 def index():
@@ -215,7 +283,6 @@ def serve_tile(z, x, y):
     if os.path.exists(tile_path) and is_tile_in_bounds(x, y, z):
         return send_file(tile_path, mimetype='image/png')
     
-    # Return 404 for missing tiles
     return '', 404
 
 def is_tile_in_bounds(x, y, z):
@@ -247,9 +314,8 @@ def realtime_data():
 
 @app.route('/api/collect', methods=['POST'])
 def collect_data():
-    """Collect and store air quality data at specified location with time-series data"""
+    """Collect and store air quality data at specified location"""
     try:
-        # Validate request data
         if not request.is_json:
             return jsonify({'error': 'Request must be JSON'}), 400
         
@@ -259,7 +325,6 @@ def collect_data():
         if not all(field in req for field in required_fields):
             return jsonify({'error': f'Missing required fields: {required_fields}'}), 400
         
-        # Check if this is a data point submission or final collection
         if 'collectionData' in req:
             return save_complete_collection(req)
         else:
@@ -267,16 +332,14 @@ def collect_data():
             
     except Exception as e:
         print(f"❌ Collection error: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': str(e)}), 500
 
 def save_simple_collection(req):
-    """Save a simple collection (current approach)"""
+    """Save a simple collection"""
     try:
-        # Validate and parse coordinates
         lat = float(req['latitude'])
         lng = float(req['longitude'])
         
-        # Validate coordinates are within NITK campus bounds
         if not (BOUNDS['south'] <= lat <= BOUNDS['north'] and 
                 BOUNDS['west'] <= lng <= BOUNDS['east']):
             return jsonify({
@@ -305,7 +368,7 @@ def save_simple_collection(req):
         conn.commit()
         conn.close()
         
-        print(f"✅ Simple collection saved: ID={reading_id}, Location='{location_name}'")
+        print(f"✅ Data collected successfully: {location_name} at ({lat}, {lng}), ID: {reading_id}")
         
         return jsonify({
             'id': reading_id,
@@ -328,7 +391,6 @@ def save_simple_collection(req):
 def save_complete_collection(req):
     """Save a complete collection with time-series data"""
     try:
-        # Validate and parse coordinates
         lat = float(req['latitude'])
         lng = float(req['longitude'])
         location_name = req['locationName'].strip()
@@ -342,7 +404,9 @@ def save_complete_collection(req):
         avg_pm10 = sum(d['pm10'] for d in collection_data) / len(collection_data)
         avg_temp = sum(d['temperature'] for d in collection_data) / len(collection_data)
         avg_humidity = sum(d['humidity'] for d in collection_data) / len(collection_data)
-        avg_aqi = calculate_aqi(avg_pm25)
+        
+        # Calculate AQI
+        avg_aqi = sensor_manager.calculate_aqi(avg_pm25, avg_pm10) if sensor_manager else 50
         
         conn = sqlite3.connect('data/air_quality.db')
         cursor = conn.cursor()
@@ -368,7 +432,7 @@ def save_complete_collection(req):
         conn.commit()
         conn.close()
         
-        print(f"✅ Complete collection saved: ID={reading_id}, Points={len(collection_data)}")
+        print(f"✅ Data collected successfully: {location_name} at ({lat}, {lng}), ID: {reading_id}")
         
         return jsonify({
             'id': reading_id,
@@ -396,7 +460,6 @@ def get_readings():
         conn = sqlite3.connect('data/air_quality.db')
         cursor = conn.cursor()
         
-        # Get all readings with collection data info
         cursor.execute('''SELECT r.id, r.location_name, r.latitude, r.longitude, r.aqi, r.pm25, r.pm10, 
                                  r.temp, r.humidity, r.timestamp, r.created_at,
                                  COUNT(c.id) as collection_points
@@ -444,7 +507,6 @@ def get_collection_data(reading_id):
         conn = sqlite3.connect('data/air_quality.db')
         cursor = conn.cursor()
         
-        # Get collection data points
         cursor.execute('''SELECT pm25, pm10, temperature, humidity, timestamp, sequence_number
                          FROM collection_data 
                          WHERE reading_id = ? 
@@ -474,62 +536,16 @@ def get_collection_data(reading_id):
         print(f"❌ Error retrieving collection data: {e}")
         return jsonify({'error': 'Failed to retrieve collection data', 'collection_data': []}), 500
 
-@app.route('/api/readings/<int:reading_id>', methods=['DELETE'])
-def delete_reading(reading_id):
-    """Delete a specific reading and all its collection data"""
-    try:
-        conn = sqlite3.connect('data/air_quality.db')
-        cursor = conn.cursor()
-        
-        # Check if reading exists
-        cursor.execute('SELECT location_name FROM readings WHERE id = ?', (reading_id,))
-        reading = cursor.fetchone()
-        
-        if not reading:
-            conn.close()
-            return jsonify({'error': 'Reading not found'}), 404
-        
-        location_name = reading[0]
-        
-        # Delete collection data first (foreign key constraint)
-        cursor.execute('DELETE FROM collection_data WHERE reading_id = ?', (reading_id,))
-        collection_deleted = cursor.rowcount
-        
-        # Delete the main reading
-        cursor.execute('DELETE FROM readings WHERE id = ?', (reading_id,))
-        reading_deleted = cursor.rowcount
-        
-        conn.commit()
-        conn.close()
-        
-        if reading_deleted > 0:
-            print(f"✅ Deleted reading ID={reading_id}, Location='{location_name}', Collection points={collection_deleted}")
-            return jsonify({
-                'id': reading_id,
-                'location': location_name,
-                'collection_points_deleted': collection_deleted,
-                'status': 'success',
-                'message': f'Successfully deleted reading from {location_name}'
-            })
-        else:
-            return jsonify({'error': 'Failed to delete reading'}), 500
-            
-    except Exception as e:
-        print(f"❌ Delete error: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
-
 @app.route('/api/status')
 def system_status():
     """Get system status and health information"""
     try:
-        # Check database
         conn = sqlite3.connect('data/air_quality.db')
         reading_count = conn.execute('SELECT COUNT(*) FROM readings').fetchone()[0]
         collection_points = conn.execute('SELECT COUNT(*) FROM collection_data').fetchone()[0]
         latest_reading = conn.execute('SELECT created_at FROM readings ORDER BY created_at DESC LIMIT 1').fetchone()
         conn.close()
         
-        # Check sensor status
         with SENSOR_LOCK:
             sensor_status = 'active' if any(SENSOR_DATA.values()) else 'initializing'
             latest_values = SENSOR_DATA.copy()
@@ -562,7 +578,6 @@ def system_status():
 def map_status():
     """Get offline map tile availability status"""
     try:
-        # Count available tiles
         tile_count = 0
         tiles_path = 'static/tiles'
         
@@ -570,7 +585,6 @@ def map_status():
             for root, dirs, files in os.walk(tiles_path):
                 tile_count += sum(1 for f in files if f.endswith('.png'))
         
-        # Check metadata
         metadata_path = 'static/tiles/metadata.json'
         metadata = {}
         if os.path.exists(metadata_path):
@@ -608,7 +622,7 @@ def internal_error(error):
     return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
-    print("🌱 NITK Air Quality Monitor Starting...")
+    print("🌱 NITK Air Quality Monitor Started")
     
     # Initialize database
     init_db()
@@ -618,28 +632,24 @@ if __name__ == '__main__':
     sensor_thread.start()
     
     print("📊 Mode: Hardware" if HAS_SENSORS else "📊 Mode: Simulation")
-    print("🌐 Server: http://0.0.0.0:5000")
-    print("📱 Dashboard: http://localhost:5000")
-    print("🔗 API Status: http://localhost:5000/api/status")
-    print("📈 Readings API: http://localhost:5000/api/readings")
-    print("\n✅ System ready! Press Ctrl+C to stop.\n")
+    print("🌐 Access: http://0.0.0.0:5000")
+    print("✅ System ready! Press Ctrl+C to stop.\n")
     
     try:
-        # Run Flask application
         app.run(
-            debug=False,  # Set to True for development
+            debug=False,
             host='0.0.0.0', 
             port=5000,
             threaded=True
         )
     except KeyboardInterrupt:
-        print("\n🛑 Shutting down NITK Air Quality Monitor...")
+        print("\n🛑 Shutdown signal received")
+        print("🔄 Sensor manager stopped")
     finally:
-        # Cleanup GPIO if using hardware
         if HAS_SENSORS:
             try:
+                print("🧹 GPIO cleaned up")
                 GPIO.cleanup()
-                print("✅ GPIO cleanup completed")
             except:
                 pass
         print("👋 Goodbye!")

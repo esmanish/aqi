@@ -74,7 +74,7 @@ class SensorManager:
             pm10_ratio = self.read_dust_sensor(24, 3)
             
             # Convert ratios to concentrations for Mangalore
-            pm25 = max(8, pm25_ratio * 100)  # 15-30 range
+            pm25 = max(12, pm25_ratio * 100)  # 15-30 range
             pm10 = max(pm25 * 1.5, pm10_ratio * 120)  # 35-60 range
             
             # Read environmental sensors

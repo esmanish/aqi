@@ -20,17 +20,41 @@ BOUNDS = {'north': 13.018, 'south': 13.004, 'east': 74.802, 'west': 74.780}
 SENSOR_DATA = {'pm25': 0, 'pm10': 0, 'temp': 0, 'humidity': 0, 'aqi': 0}
 SENSOR_LOCK = threading.Lock()
 
-# Import sensor manager inline to avoid import issues
+# MODIFIED SensorManager with HIGHER AQI caps
 class SensorManager:
     def __init__(self, hardware=False):
         self.hardware = hardware
         self.history = {'pm25': [], 'pm10': [], 'temp': [], 'humidity': []}
         self.buffer_size = 5
         
-        # Base values for Mangalore region
-        self.base_values = {
-            'pm25': 18, 'pm10': 42, 'temp': 28, 'humidity': 65
+        # === EASY TUNING PARAMETERS ===
+        # PM2.5 Baseline & Conversion
+        self.pm25_baseline = 8      # Added to all PM2.5 readings
+        self.pm25_multiplier = 0.8  # Duty cycle conversion factor
+        
+        # PM10 Baseline & Conversion  
+        self.pm10_baseline = 12     # Added to all PM10 readings (reduced from 15)
+        self.pm10_multiplier = 1.0  # Duty cycle conversion factor (reduced from 1.5)
+        
+        # Safety Caps (Max allowed values)
+        self.pm25_indoor_cap = 35
+        self.pm25_outdoor_cap = 120
+        self.pm10_indoor_cap = 45   # Reduced from 60
+        self.pm10_outdoor_cap = 150 # Reduced from 220
+        
+        # PM10/PM2.5 Ratio Control
+        self.pm10_min_ratio = 1.3   # PM10 must be at least 1.3x PM2.5
+        self.pm10_max_ratio = 2.5   # PM10 capped at 2.5x PM2.5
+        # === END TUNING PARAMETERS ===
+        
+        # Current values for smooth transitions
+        self.current_values = {
+            'pm25': 15.0, 'pm10': 30.0, 'temp': 24.0, 'humidity': 60.0
         }
+        
+        # Environment detection
+        self.environment_state = "indoor"
+        self.momentum = 0.75  # For smooth demo transitions
         
         # Initialize hardware sensors
         if self.hardware and HAS_SENSORS:
@@ -40,7 +64,7 @@ class SensorManager:
                 GPIO.setup(23, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # PM2.5
                 GPIO.setup(24, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # PM10
                 self.dht22 = adafruit_dht.DHT22(board.D27)
-                print("✅ Hardware sensors initialized (GPIO 23/24)")
+                print("✅ Hardware sensors initialized with HIGHER AQI CAPS")
             except Exception as e:
                 print(f"❌ Hardware init failed: {e}")
                 self.hardware = False
@@ -51,10 +75,10 @@ class SensorManager:
         else:
             return self._read_simulation()
     
-    def read_dust_sensor(self, pin, duration=3):
-        """Read dust sensor with proper timing"""
+    def read_dust_sensor(self, pin, duration=2):
+        """Read DSM501A with saturation protection"""
         if not HAS_SENSORS:
-            return random.uniform(0.01, 0.3)
+            return random.uniform(0.02, 0.35)  # Slightly higher simulation range
         
         start_time = time.time()
         low_time = 0
@@ -64,22 +88,79 @@ class SensorManager:
                 low_time += 0.01
             time.sleep(0.01)
         
-        ratio = (low_time / duration) * 100
-        return max(0, ratio)
+        # Calculate duty cycle with safety cap
+        duty_cycle = (low_time / duration) * 100
+        return max(0, min(90, duty_cycle))  # Cap at 90% to prevent saturation
+    
+    def _convert_duty_to_pm(self, duty_cycle, sensor_type="pm25"):
+        """Convert duty cycle to PM using tunable parameters"""
+        if duty_cycle <= 3:
+            return 0
+        
+        adjusted_duty = duty_cycle - 3
+        
+        if sensor_type == "pm25":
+            # Use tunable PM2.5 parameters
+            pm_value = adjusted_duty * self.pm25_multiplier
+        else:  # pm10
+            # Use tunable PM10 parameters
+            pm_value = adjusted_duty * self.pm10_multiplier
+        
+        # Hard safety caps
+        if sensor_type == "pm25":
+            return min(pm_value, 150)
+        else:
+            return min(pm_value, 200)  # Reduced from 300
+    
+    def _detect_environment(self, temp, humidity, pm25, pm10):
+        """Smart environment detection using tunable thresholds"""
+        indoor_score = 0
+        
+        # Temperature indicators
+        if 20 <= temp <= 27:
+            indoor_score += 3
+        elif temp > 30:
+            indoor_score -= 2
+        
+        # Humidity indicators
+        if humidity < 65:
+            indoor_score += 2
+        elif humidity > 75:
+            indoor_score -= 1
+        
+        # PM level indicators (using tunable caps)
+        if pm25 < self.pm25_indoor_cap * 0.7 and pm10 < self.pm10_indoor_cap * 0.7:
+            indoor_score += 3
+        elif pm25 > self.pm25_outdoor_cap * 0.4 or pm10 > self.pm10_outdoor_cap * 0.4:
+            indoor_score -= 2
+        
+        # Update with hysteresis (prevents rapid switching)
+        if indoor_score >= 5 and self.environment_state != "indoor":
+            self.environment_state = "indoor"
+            print("🏠 Environment: Indoor (AC/Clean)")
+        elif indoor_score <= 1 and self.environment_state != "outdoor":
+            self.environment_state = "outdoor"
+            print("🌿 Environment: Outdoor")
+        
+        return self.environment_state
+    
+    def _apply_momentum(self, key, new_value):
+        """Apply momentum for smooth demo transitions"""
+        if key not in self.current_values:
+            self.current_values[key] = new_value
+            return new_value
+        
+        # Smooth transition for professional demo
+        self.current_values[key] = (self.momentum * self.current_values[key] + 
+                                   (1 - self.momentum) * new_value)
+        return self.current_values[key]
     
     def _read_hardware(self):
+        """MODIFIED: Read actual sensors with higher baseline values"""
         try:
-            # Read dust sensors
-            pm25_ratio = self.read_dust_sensor(23, 3)
-            pm10_ratio = self.read_dust_sensor(24, 3)
-            
-            # Convert ratios to concentrations for Mangalore
-            pm25 = max(12, pm25_ratio * 100)  # 15-30 range
-            pm10 = max(pm25 * 1.5, pm10_ratio * 120)  # 35-60 range
-            
             # Read environmental sensors
             temp = humidity = None
-            for attempt in range(3):
+            for attempt in range(2):  # Quick retry for demo
                 try:
                     temp = self.dht22.temperature
                     humidity = self.dht22.humidity
@@ -87,15 +168,61 @@ class SensorManager:
                         break
                 except:
                     pass
-                time.sleep(0.3)
+                time.sleep(0.2)
             
-            # Use defaults if sensor fails
+            # Defaults if DHT22 fails
             if temp is None:
-                temp = self.base_values['temp'] + random.uniform(-1, 1)
+                temp = 26 + random.uniform(-2, 2)  # Slightly higher base temp
             if humidity is None:
-                humidity = self.base_values['humidity'] + random.uniform(-3, 3)
+                humidity = 65 + random.uniform(-5, 5)  # Slightly higher base humidity
             
-            # Add to history
+            # Read dust sensors with MODIFIED conversion
+            pm25_duty = self.read_dust_sensor(23, 2)
+            pm10_duty = self.read_dust_sensor(24, 2)
+            
+            # Convert with tunable parameters
+            pm25_raw = self._convert_duty_to_pm(pm25_duty, "pm25")
+            pm10_raw = self._convert_duty_to_pm(pm10_duty, "pm10")
+            
+            # Add tunable baseline offsets
+            pm25_raw += self.pm25_baseline
+            pm10_raw += self.pm10_baseline
+            
+            # Humidity compensation (less aggressive)
+            if humidity > 70:
+                pm25_raw *= 0.95
+                pm10_raw *= 0.95
+            
+            # REALISTIC PM10/PM2.5 ratio control
+            if pm10_raw < pm25_raw * self.pm10_min_ratio:
+                pm10_raw = pm25_raw * self.pm10_min_ratio
+            elif pm10_raw > pm25_raw * self.pm10_max_ratio:
+                pm10_raw = pm25_raw * self.pm10_max_ratio
+            
+            # Detect environment
+            environment = self._detect_environment(temp, humidity, pm25_raw, pm10_raw)
+            
+            # Apply environment-based caps using tunable parameters
+            if environment == "indoor":
+                pm25_raw = min(pm25_raw, self.pm25_indoor_cap)
+                pm10_raw = min(pm10_raw, self.pm10_indoor_cap)
+            else:
+                pm25_raw = min(pm25_raw, self.pm25_outdoor_cap)
+                pm10_raw = min(pm10_raw, self.pm10_outdoor_cap)
+            
+            # Apply momentum for smooth transitions
+            pm25 = self._apply_momentum('pm25', pm25_raw)
+            pm10 = self._apply_momentum('pm10', pm10_raw)
+            temp = self._apply_momentum('temp', temp)
+            humidity = self._apply_momentum('humidity', humidity)
+            
+            # MODIFIED absolute safety bounds (higher values)
+            pm25 = max(8, min(150, pm25))   # Was max 100
+            pm10 = max(15, min(300, pm10))  # Was max 200
+            temp = max(18, min(35, temp))
+            humidity = max(30, min(90, humidity))
+            
+            # Add to history for additional smoothing
             self.history['pm25'].append(pm25)
             self.history['pm10'].append(pm10)
             self.history['temp'].append(temp)
@@ -106,8 +233,8 @@ class SensorManager:
                 if len(self.history[key]) > self.buffer_size:
                     self.history[key].pop(0)
             
-            # Return averaged values
-            return {
+            # Return final values
+            final_values = {
                 'pm25': round(sum(self.history['pm25']) / len(self.history['pm25']), 1),
                 'pm10': round(sum(self.history['pm10']) / len(self.history['pm10']), 1),
                 'temperature': round(sum(self.history['temp']) / len(self.history['temp']), 1),
@@ -115,33 +242,41 @@ class SensorManager:
                 'timestamp': time.time()
             }
             
+            # Debug output for demo
+            aqi = self.calculate_aqi(final_values['pm25'], final_values['pm10'])
+            print(f"📊 {environment}: PM2.5={final_values['pm25']}, PM10={final_values['pm10']}, AQI={aqi}")
+            
+            return final_values
+            
         except Exception as e:
             print(f"❌ Hardware reading error: {e}")
             return self._read_simulation()
     
     def _read_simulation(self):
-        # Enhanced simulation with location variation
-        t = time.time()
+        """Simulation with realistic PM10/PM2.5 ratios"""
+        # Cycle between indoor/outdoor every 30 seconds
+        cycle = (time.time() % 60) // 30
         
-        # Daily patterns
-        hour_factor = math.sin((t % 86400) / 86400 * 2 * math.pi - math.pi/2)
+        if cycle == 0:  # Indoor
+            base_pm25, base_pm10 = 18, 30   # Realistic 1.7x ratio
+            base_temp, base_humidity = 26, 60
+        else:  # Outdoor  
+            base_pm25, base_pm10 = 35, 65   # Realistic 1.9x ratio
+            base_temp, base_humidity = 30, 75
         
-        # Location-based variation (changes every 5 minutes)
-        location_seed = int(t / 300) % 7
-        location_factor = 0.8 + (location_seed * 0.06)  # 0.8 to 1.16 multiplier
+        # Small variations
+        pm25 = base_pm25 + random.uniform(-3, 5)
+        pm10 = base_pm10 + random.uniform(-5, 8)
+        temp = base_temp + random.uniform(-1, 1)
+        humidity = base_humidity + random.uniform(-5, 5)
         
-        pm25 = self.base_values['pm25'] * location_factor + 3 * hour_factor + random.uniform(-2, 2)
-        pm10 = self.base_values['pm10'] * location_factor + 5 * hour_factor + random.uniform(-3, 3)
-        temp = self.base_values['temp'] + 4 * hour_factor + random.uniform(-0.8, 0.8)
-        humidity = self.base_values['humidity'] - 8 * hour_factor + random.uniform(-4, 4)
+        # Apply momentum
+        pm25 = self._apply_momentum('pm25', pm25)
+        pm10 = self._apply_momentum('pm10', pm10)
+        temp = self._apply_momentum('temp', temp)
+        humidity = self._apply_momentum('humidity', humidity)
         
-        # Realistic bounds for Mangalore
-        pm25 = max(12, min(28, pm25))
-        pm10 = max(max(pm25 * 1.6, 30), min(55, pm10))
-        temp = max(18, min(38, temp))
-        humidity = max(35, min(85, humidity))
-        
-        # Add to history for smoothing
+        # Add to history
         self.history['pm25'].append(pm25)
         self.history['pm10'].append(pm10)
         self.history['temp'].append(temp)
@@ -162,12 +297,13 @@ class SensorManager:
         }
     
     def calculate_aqi(self, pm25, pm10):
-        # EPA standard AQI calculation
+        """EPA standard AQI calculation"""
         aqi_pm25 = self._calc_aqi_pm25(pm25)
         aqi_pm10 = self._calc_aqi_pm10(pm10)
         return max(aqi_pm25, aqi_pm10)
     
     def _calc_aqi_pm25(self, pm25):
+        """EPA PM2.5 AQI calculation"""
         if pm25 <= 12.0:
             return round((50/12.0) * pm25)
         elif pm25 <= 35.4:
@@ -182,6 +318,7 @@ class SensorManager:
             return min(round(300 + ((500-300)/(500.4-250.4)) * (pm25-250.4)), 500)
     
     def _calc_aqi_pm10(self, pm10):
+        """EPA PM10 AQI calculation"""
         if pm10 <= 54:
             return round((50/54) * pm10)
         elif pm10 <= 154:
@@ -246,7 +383,7 @@ def continuous_sensor_reading():
     sensor_manager = SensorManager(hardware=HAS_SENSORS)
     
     print("🔄 Starting continuous sensor reading...")
-    print("📊 Mode: Hardware" if HAS_SENSORS else "📊 Mode: Simulation")
+    print("📊 Mode: Hardware with HIGHER AQI CAPS" if HAS_SENSORS else "📊 Mode: Higher Baseline Simulation")
     
     while True:
         try:
@@ -536,6 +673,40 @@ def get_collection_data(reading_id):
         print(f"❌ Error retrieving collection data: {e}")
         return jsonify({'error': 'Failed to retrieve collection data', 'collection_data': []}), 500
 
+@app.route('/api/readings/<int:reading_id>', methods=['DELETE'])
+def delete_reading(reading_id):
+    """Delete a specific air quality reading"""
+    try:
+        conn = sqlite3.connect('data/air_quality.db')
+        cursor = conn.cursor()
+        
+        # Check if reading exists
+        cursor.execute('SELECT id FROM readings WHERE id = ?', (reading_id,))
+        if not cursor.fetchone():
+            conn.close()
+            return jsonify({'error': 'Reading not found'}), 404
+        
+        # Delete collection data first (foreign key constraint)
+        cursor.execute('DELETE FROM collection_data WHERE reading_id = ?', (reading_id,))
+        
+        # Delete main reading
+        cursor.execute('DELETE FROM readings WHERE id = ?', (reading_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        print(f"✅ Reading {reading_id} deleted successfully")
+        
+        return jsonify({
+            'message': 'Reading deleted successfully',
+            'reading_id': reading_id,
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        print(f"❌ Delete error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/status')
 def system_status():
     """Get system status and health information"""
@@ -612,40 +783,6 @@ def map_status():
             'error': str(e)
         })
 
-@app.route('/api/readings/<int:reading_id>', methods=['DELETE'])
-def delete_reading(reading_id):
-    """Delete a specific air quality reading"""
-    try:
-        conn = sqlite3.connect('data/air_quality.db')
-        cursor = conn.cursor()
-        
-        # Check if reading exists
-        cursor.execute('SELECT id FROM readings WHERE id = ?', (reading_id,))
-        if not cursor.fetchone():
-            conn.close()
-            return jsonify({'error': 'Reading not found'}), 404
-        
-        # Delete collection data first (foreign key constraint)
-        cursor.execute('DELETE FROM collection_data WHERE reading_id = ?', (reading_id,))
-        
-        # Delete main reading
-        cursor.execute('DELETE FROM readings WHERE id = ?', (reading_id,))
-        
-        conn.commit()
-        conn.close()
-        
-        print(f"✅ Reading {reading_id} deleted successfully")
-        
-        return jsonify({
-            'message': 'Reading deleted successfully',
-            'reading_id': reading_id,
-            'status': 'success'
-        })
-        
-    except Exception as e:
-        print(f"❌ Delete error: {e}")
-        return jsonify({'error': str(e)}), 500
-
 # Error handlers
 @app.errorhandler(404)
 def not_found(error):
@@ -665,7 +802,7 @@ if __name__ == '__main__':
     sensor_thread = threading.Thread(target=continuous_sensor_reading, daemon=True)
     sensor_thread.start()
     
-    print("📊 Mode: Hardware" if HAS_SENSORS else "📊 Mode: Simulation")
+    print("📊 Mode: Hardware with HIGHER AQI CAPS" if HAS_SENSORS else "📊 Mode: Higher Baseline Simulation")
     print("🌐 Access: http://0.0.0.0:5000")
     print("✅ System ready! Press Ctrl+C to stop.\n")
     

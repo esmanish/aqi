@@ -13,12 +13,27 @@ class SensorManager:
     def __init__(self, hardware=False):
         self.hardware = hardware
         self.history = {'pm25': [], 'pm10': [], 'temp': [], 'humidity': []}
-        self.buffer_size = 5
+        self.buffer_size = 8  # Increased for more stability
         
-        # Base values for Mangalore region
+        # Realistic Mangalore baseline values (current conditions)
         self.base_values = {
-            'pm25': 18, 'pm10': 42, 'temp': 28, 'humidity': 65
+            'pm25': 22,    # Current Mangalore PM2.5
+            'pm10': 56,    # Current Mangalore PM10  
+            'temp': 28,    # Typical Mangalore temperature
+            'humidity': 65 # Typical coastal humidity
         }
+        
+        # For gradual changes and momentum
+        self.current_values = {
+            'pm25': self.base_values['pm25'],
+            'pm10': self.base_values['pm10'],
+            'temp': self.base_values['temp'],
+            'humidity': self.base_values['humidity']
+        }
+        
+        # Momentum factors for gradual changes
+        self.momentum = 0.85  # How much previous value influences current (0.85 = 85% previous + 15% new)
+        self.last_update = time.time()
         
         # Initialize hardware sensors
         if self.hardware and HAS_HARDWARE:
@@ -61,11 +76,25 @@ class SensorManager:
             pm25_ratio = self.read_dust_sensor(23, 3)
             pm10_ratio = self.read_dust_sensor(24, 3)
             
-            # Convert ratios to concentrations for Mangalore
-            pm25 = max(8, pm25_ratio * 100 + 15)  # 15-30 range
-            pm10 = max(pm25 * 1.5, pm10_ratio * 120 + 35)  # 35-60 range
+            # Improved calibration for realistic Mangalore values
+            # Baseline when no dust (clean air)
+            pm25_baseline = 20  # Clean indoor air
+            pm10_baseline = 45  # Clean indoor air
             
-            # Read environmental sensors
+            # Convert sensor ratios to realistic concentrations
+            # Higher ratio = more particles detected
+            pm25 = pm25_baseline + (pm25_ratio * 150)  # Can go up to ~170 with dust
+            pm10 = pm10_baseline + (pm10_ratio * 200)  # Can go up to ~245 with dust
+            
+            # Ensure PM10 >= PM2.5 (physically correct)
+            if pm10 < pm25 * 1.2:
+                pm10 = pm25 * 1.4
+            
+            # Apply momentum for gradual changes
+            pm25 = self._apply_momentum('pm25', pm25)
+            pm10 = self._apply_momentum('pm10', pm10)
+            
+            # Read environmental sensors with retry logic
             temp = humidity = None
             for attempt in range(3):
                 try:
@@ -77,13 +106,18 @@ class SensorManager:
                     pass
                 time.sleep(0.3)
             
-            # Use defaults if sensor fails
+            # Use gradual defaults if sensor fails
             if temp is None:
-                temp = self.base_values['temp'] + random.uniform(-1, 1)
+                temp = self._apply_momentum('temp', self.base_values['temp'] + random.uniform(-0.5, 0.5))
+            else:
+                temp = self._apply_momentum('temp', temp)
+                
             if humidity is None:
-                humidity = self.base_values['humidity'] + random.uniform(-3, 3)
+                humidity = self._apply_momentum('humidity', self.base_values['humidity'] + random.uniform(-2, 2))
+            else:
+                humidity = self._apply_momentum('humidity', humidity)
             
-            # Add to history
+            # Add to history for additional smoothing
             self.history['pm25'].append(pm25)
             self.history['pm10'].append(pm10)
             self.history['temp'].append(temp)
@@ -94,7 +128,7 @@ class SensorManager:
                 if len(self.history[key]) > self.buffer_size:
                     self.history[key].pop(0)
             
-            # Return averaged values
+            # Return smoothed averaged values
             return {
                 'pm25': round(sum(self.history['pm25']) / len(self.history['pm25']), 1),
                 'pm10': round(sum(self.history['pm10']) / len(self.history['pm10']), 1),
@@ -107,29 +141,58 @@ class SensorManager:
             print(f"❌ Hardware reading error: {e}")
             return self._read_simulation()
     
+    def _apply_momentum(self, key, new_value):
+        """Apply momentum to make changes gradual"""
+        if key in self.current_values:
+            # Gradual change: 85% previous + 15% new
+            self.current_values[key] = (self.momentum * self.current_values[key] + 
+                                      (1 - self.momentum) * new_value)
+        else:
+            self.current_values[key] = new_value
+        
+        return self.current_values[key]
+    
     def _read_simulation(self):
-        # Enhanced simulation with location variation
-        t = time.time()
+        """Enhanced simulation with realistic Mangalore values and gradual changes"""
+        current_time = time.time()
+        time_since_last = current_time - self.last_update
+        self.last_update = current_time
         
-        # Daily patterns
-        hour_factor = math.sin((t % 86400) / 86400 * 2 * math.pi - math.pi/2)
+        # Very subtle daily patterns (much smaller variations)
+        hour_of_day = (current_time % 86400) / 86400 * 24
+        daily_pm_factor = 1.0 + 0.15 * math.sin(2 * math.pi * hour_of_day / 24 - math.pi/3)  # Small variation
+        daily_temp_factor = 1.0 + 0.08 * math.sin(2 * math.pi * hour_of_day / 24)  # Small temp variation
+        daily_humidity_factor = 1.0 - 0.12 * math.sin(2 * math.pi * hour_of_day / 24)  # Inverse humidity
         
-        # Location-based variation (changes every 5 minutes)
-        location_seed = int(t / 300) % 7
-        location_factor = 0.8 + (location_seed * 0.06)  # 0.8 to 1.16 multiplier
+        # Very slow location/environmental changes (every 10 minutes)
+        location_seed = int(current_time / 600) % 5  # Changes every 10 minutes
+        location_factor = 0.95 + (location_seed * 0.02)  # Very small variation (0.95 to 1.03)
         
-        pm25 = self.base_values['pm25'] * location_factor + 3 * hour_factor + random.uniform(-2, 2)
-        pm10 = self.base_values['pm10'] * location_factor + 5 * hour_factor + random.uniform(-3, 3)
-        temp = self.base_values['temp'] + 4 * hour_factor + random.uniform(-0.8, 0.8)
-        humidity = self.base_values['humidity'] - 8 * hour_factor + random.uniform(-4, 4)
+        # Calculate target values with realistic Mangalore baseline
+        target_pm25 = self.base_values['pm25'] * daily_pm_factor * location_factor
+        target_pm10 = self.base_values['pm10'] * daily_pm_factor * location_factor
+        target_temp = self.base_values['temp'] * daily_temp_factor
+        target_humidity = self.base_values['humidity'] * daily_humidity_factor
         
-        # Realistic bounds for Mangalore
-        pm25 = max(12, min(28, pm25))
-        pm10 = max(max(pm25 * 1.6, 30), min(55, pm10))
-        temp = max(18, min(38, temp))
-        humidity = max(35, min(85, humidity))
+        # Add very small random fluctuations
+        target_pm25 += random.uniform(-0.8, 0.8)  # Reduced fluctuation
+        target_pm10 += random.uniform(-1.2, 1.2)  # Reduced fluctuation
+        target_temp += random.uniform(-0.3, 0.3)   # Reduced fluctuation
+        target_humidity += random.uniform(-1.5, 1.5)  # Reduced fluctuation
         
-        # Add to history for smoothing
+        # Apply momentum for gradual changes
+        pm25 = self._apply_momentum('pm25', target_pm25)
+        pm10 = self._apply_momentum('pm10', target_pm10)
+        temp = self._apply_momentum('temp', target_temp)
+        humidity = self._apply_momentum('humidity', target_humidity)
+        
+        # Ensure realistic bounds for Mangalore
+        pm25 = max(15, min(40, pm25))  # Realistic range for moderate air quality
+        pm10 = max(max(pm25 * 1.8, 35), min(80, pm10))  # PM10 should be higher than PM2.5
+        temp = max(24, min(35, temp))     # Mangalore temperature range
+        humidity = max(50, min(85, humidity))  # Coastal humidity range
+        
+        # Add to history for additional smoothing
         self.history['pm25'].append(pm25)
         self.history['pm10'].append(pm10)
         self.history['temp'].append(temp)
@@ -140,7 +203,7 @@ class SensorManager:
             if len(self.history[key]) > self.buffer_size:
                 self.history[key].pop(0)
         
-        # Return averaged values
+        # Return smoothed values
         return {
             'pm25': round(sum(self.history['pm25']) / len(self.history['pm25']), 1),
             'pm10': round(sum(self.history['pm10']) / len(self.history['pm10']), 1),
@@ -150,12 +213,13 @@ class SensorManager:
         }
     
     def calculate_aqi(self, pm25, pm10):
-        # EPA standard AQI calculation
+        """EPA standard AQI calculation - this is correct"""
         aqi_pm25 = self._calc_aqi_pm25(pm25)
         aqi_pm10 = self._calc_aqi_pm10(pm10)
         return max(aqi_pm25, aqi_pm10)
     
     def _calc_aqi_pm25(self, pm25):
+        """EPA PM2.5 AQI calculation"""
         if pm25 <= 12.0:
             return round((50/12.0) * pm25)
         elif pm25 <= 35.4:
@@ -170,6 +234,7 @@ class SensorManager:
             return min(round(300 + ((500-300)/(500.4-250.4)) * (pm25-250.4)), 500)
     
     def _calc_aqi_pm10(self, pm10):
+        """EPA PM10 AQI calculation"""
         if pm10 <= 54:
             return round((50/54) * pm10)
         elif pm10 <= 154:
@@ -182,3 +247,18 @@ class SensorManager:
             return round(200 + ((300-200)/(424-354)) * (pm10-354))
         else:
             return 301
+    
+    def get_aqi_status(self, aqi):
+        """Get AQI status description"""
+        if aqi <= 50:
+            return "Good"
+        elif aqi <= 100:
+            return "Moderate"
+        elif aqi <= 150:
+            return "Unhealthy for Sensitive Groups"
+        elif aqi <= 200:
+            return "Unhealthy"
+        elif aqi <= 300:
+            return "Very Unhealthy"
+        else:
+            return "Hazardous"

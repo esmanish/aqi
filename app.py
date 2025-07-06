@@ -612,6 +612,40 @@ def map_status():
             'error': str(e)
         })
 
+@app.route('/api/readings/<int:reading_id>', methods=['DELETE'])
+def delete_reading(reading_id):
+    """Delete a specific air quality reading"""
+    try:
+        conn = sqlite3.connect('data/air_quality.db')
+        cursor = conn.cursor()
+        
+        # Check if reading exists
+        cursor.execute('SELECT id FROM readings WHERE id = ?', (reading_id,))
+        if not cursor.fetchone():
+            conn.close()
+            return jsonify({'error': 'Reading not found'}), 404
+        
+        # Delete collection data first (foreign key constraint)
+        cursor.execute('DELETE FROM collection_data WHERE reading_id = ?', (reading_id,))
+        
+        # Delete main reading
+        cursor.execute('DELETE FROM readings WHERE id = ?', (reading_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        print(f"✅ Reading {reading_id} deleted successfully")
+        
+        return jsonify({
+            'message': 'Reading deleted successfully',
+            'reading_id': reading_id,
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        print(f"❌ Delete error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 # Error handlers
 @app.errorhandler(404)
 def not_found(error):
